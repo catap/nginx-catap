@@ -1,0 +1,48 @@
+Index: nginx-catap/nginx/src/core/ngx_palloc.c
+===================================================================
+--- nginx-catap.orig/nginx/src/core/ngx_palloc.c
++++ nginx-catap/nginx/src/core/ngx_palloc.c
+@@ -309,6 +309,31 @@ ngx_pcalloc(ngx_pool_t *pool, size_t siz
+     return p;
+ }
+ 
++void *
++ngx_prealloc(ngx_pool_t *pool, void *ptr, size_t old_size, size_t new_size)
++{
++  void *new;
++  if ((u_char*) ptr + old_size == pool->d.last &&
++      pool->d.last + new_size <= pool->d.end) {
++
++    /*
++     * the str allocation is last in the pool
++     * and there is space for new len
++     */
++
++    pool->d.last += new_size;
++    return ptr;
++  }
++
++  new = ngx_palloc(pool, new_size);
++  if (new == NULL) {
++    return NULL;
++  }
++
++  ngx_memcpy((u_char*)new, (u_char*)ptr, old_size);
++
++  return new;
++}
+ 
+ ngx_pool_cleanup_t *
+ ngx_pool_cleanup_add(ngx_pool_t *p, size_t size)
+Index: nginx-catap/nginx/src/core/ngx_palloc.h
+===================================================================
+--- nginx-catap.orig/nginx/src/core/ngx_palloc.h
++++ nginx-catap/nginx/src/core/ngx_palloc.h
+@@ -73,6 +73,7 @@ typedef struct {
+ 
+ void *ngx_alloc(size_t size, ngx_log_t *log);
+ void *ngx_calloc(size_t size, ngx_log_t *log);
++void *ngx_prealloc(ngx_pool_t *pool, void *ptr, size_t old_size, size_t new_zie);
+ 
+ ngx_pool_t *ngx_create_pool(size_t size, ngx_log_t *log);
+ void ngx_destroy_pool(ngx_pool_t *pool);
