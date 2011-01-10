@@ -1,0 +1,11 @@
+#!/bin/sh -e
+
+pushd $(dirname $0) > /dev/null
+
+make apply
+
+pushd nginx > /dev/null
+./configure $@
+popd > /dev/null
+
+popd > /dev/null

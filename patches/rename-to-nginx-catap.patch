@@ -1,0 +1,171 @@
+Index: nginx-catap/nginx/auto/make
+===================================================================
+--- nginx-catap.orig/nginx/auto/make
++++ nginx-catap/nginx/auto/make
+@@ -187,8 +187,8 @@ ngx_link=${CORE_LINK:+`echo $CORE_LINK \
+ 
+ cat << END                                                    >> $NGX_MAKEFILE
+ 
+-$NGX_OBJS${ngx_dirsep}nginx${ngx_binext}:	$ngx_deps$ngx_spacer
+-	\$(LINK) ${ngx_long_start}${ngx_binout}$NGX_OBJS${ngx_dirsep}nginx$ngx_long_cont$ngx_objs$ngx_libs$ngx_link
++$NGX_OBJS${ngx_dirsep}nginx-catap${ngx_binext}:	$ngx_deps$ngx_spacer
++	\$(LINK) ${ngx_long_start}${ngx_binout}$NGX_OBJS${ngx_dirsep}nginx-catap$ngx_long_cont$ngx_objs$ngx_libs$ngx_link
+ 	$ngx_rcc
+ ${ngx_long_end}
+ END
+Index: nginx-catap/nginx/src/core/nginx.c
+===================================================================
+--- nginx-catap.orig/nginx/src/core/nginx.c
++++ nginx-catap/nginx/src/core/nginx.c
+@@ -212,7 +212,7 @@ main(int argc, char *const *argv)
+     }
+ 
+     if (ngx_show_version) {
+-        ngx_log_stderr(0, "nginx version: " NGINX_VER);
++        ngx_log_stderr(0, "nginx-catap version: " NGINX_VER);
+ 
+         if (ngx_show_help) {
+             ngx_log_stderr(0,
+Index: nginx-catap/nginx/src/core/nginx.h
+===================================================================
+--- nginx-catap.orig/nginx/src/core/nginx.h
++++ nginx-catap/nginx/src/core/nginx.h
+@@ -10,7 +10,7 @@
+ 
+ #define nginx_version         9003
+ #define NGINX_VERSION      "0.9.3"
+-#define NGINX_VER          "nginx/" NGINX_VERSION
++#define NGINX_VER          "nginx-catap/" NGINX_VERSION
+ 
+ #define NGINX_VAR          "NGINX"
+ #define NGX_OLDPID_EXT     ".oldbin"
+Index: nginx-catap/nginx/src/http/modules/perl/nginx.pm
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/perl/nginx.pm
++++ nginx-catap/nginx/src/http/modules/perl/nginx.pm
+@@ -51,7 +51,7 @@ our @EXPORT = qw(
+ our $VERSION = '0.9.3';
+ 
+ require XSLoader;
+-XSLoader::load('nginx', $VERSION);
++XSLoader::load('nginx-catap', $VERSION);
+ 
+ # Preloaded methods go here.
+ 
+@@ -106,11 +106,11 @@ __END__
+ 
+ =head1 NAME
+ 
+-nginx - Perl interface to the nginx HTTP server API
++nginx-catap - Perl interface to the catap's fork of nginx HTTP server API
+ 
+ =head1 SYNOPSIS
+ 
+-  use nginx;
++  use nginx-catap;
+ 
+ =head1 DESCRIPTION
+ 
+Index: nginx-catap/nginx/src/http/ngx_http_header_filter_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_header_filter_module.c
++++ nginx-catap/nginx/src/http/ngx_http_header_filter_module.c
+@@ -45,7 +45,7 @@ ngx_module_t  ngx_http_header_filter_mod
+ };
+ 
+ 
+-static char ngx_http_server_string[] = "Server: nginx" CRLF;
++static char ngx_http_server_string[] = "Server: nginx-catap" CRLF;
+ static char ngx_http_server_full_string[] = "Server: " NGINX_VER CRLF;
+ 
+ 
+Index: nginx-catap/nginx/auto/install
+===================================================================
+--- nginx-catap.orig/nginx/auto/install
++++ nginx-catap/nginx/auto/install
+@@ -20,7 +20,7 @@ case ".$NGX_SBIN_PATH" in
+     ;;
+ 
+     .)
+-        NGX_SBIN_PATH=$NGX_PREFIX/sbin/nginx
++        NGX_SBIN_PATH=$NGX_PREFIX/sbin/nginx-catap
+     ;;
+ 
+     *)
+@@ -79,9 +79,9 @@ manpage:
+ 		-e "s|%%PID_PATH%%|$NGX_PID_PATH|" \\
+ 		-e "s|%%CONF_PATH%%|$NGX_CONF_PATH|" \\
+ 		-e "s|%%ERROR_LOG_PATH%%|$NGX_ERROR_LOG_PATH|" \\
+-		< man/nginx.8 > $NGX_OBJS/nginx.8
++		< man/nginx.8 > $NGX_OBJS/nginx-catap.8
+ 
+-install:	$NGX_OBJS${ngx_dirsep}nginx${ngx_binext} \
++install:	$NGX_OBJS${ngx_dirsep}nginx-catap${ngx_binext} \
+ 		$NGX_INSTALL_PERL_MODULES
+ 	test -d '\$(DESTDIR)$NGX_PREFIX' || mkdir -p '\$(DESTDIR)$NGX_PREFIX'
+ 
+@@ -90,7 +90,7 @@ install:	$NGX_OBJS${ngx_dirsep}nginx${ng
+ 	test ! -f '\$(DESTDIR)$NGX_SBIN_PATH' \
+ 		|| mv '\$(DESTDIR)$NGX_SBIN_PATH' \
+ 			'\$(DESTDIR)$NGX_SBIN_PATH.old'
+-	cp $NGX_OBJS/nginx '\$(DESTDIR)$NGX_SBIN_PATH'
++	cp $NGX_OBJS/nginx-catap '\$(DESTDIR)$NGX_SBIN_PATH'
+ 
+ 	test -d '\$(DESTDIR)$NGX_CONF_PREFIX' \
+ 		|| mkdir -p '\$(DESTDIR)$NGX_CONF_PREFIX'
+@@ -124,7 +124,7 @@ install:	$NGX_OBJS${ngx_dirsep}nginx${ng
+ 
+ 	test -f '\$(DESTDIR)$NGX_CONF_PATH' \
+ 		|| cp conf/nginx.conf '\$(DESTDIR)$NGX_CONF_PATH'
+-	cp conf/nginx.conf '\$(DESTDIR)$NGX_CONF_PREFIX/nginx.conf.default'
++	cp conf/nginx.conf '\$(DESTDIR)$NGX_CONF_PREFIX/nginx-catap.conf.default'
+ 
+ 	test -d '\$(DESTDIR)`dirname "$NGX_PID_PATH"`' \
+ 		|| mkdir -p '\$(DESTDIR)`dirname "$NGX_PID_PATH"`'
+Index: nginx-catap/nginx/auto/options
+===================================================================
+--- nginx-catap.orig/nginx/auto/options
++++ nginx-catap/nginx/auto/options
+@@ -305,11 +305,11 @@ cat << END
+   --help                             this message
+ 
+   --prefix=PATH                      set the installation prefix
+-  --sbin-path=PATH                   set path to the nginx binary file
+-  --conf-path=PATH                   set path to the nginx.conf file
++  --sbin-path=PATH                   set path to the nginx-catap binary file
++  --conf-path=PATH                   set path to the nginx-catap.conf file
+   --error-log-path=PATH              set path to the error log
+-  --pid-path=PATH                    set path to nginx.pid file
+-  --lock-path=PATH                   set path to nginx.lock file
++  --pid-path=PATH                    set path to nginx-catap.pid file
++  --lock-path=PATH                   set path to nginx-catap.lock file
+ 
+   --user=USER                        set non-privilege user
+                                      for the worker processes
+@@ -452,10 +452,10 @@ if [ ".$NGX_PLATFORM" = ".win32" ]; then
+ fi
+ 
+ 
+-NGX_CONF_PATH=${NGX_CONF_PATH:-conf/nginx.conf}
++NGX_CONF_PATH=${NGX_CONF_PATH:-conf/nginx-catap.conf}
+ NGX_CONF_PREFIX=`dirname $NGX_CONF_PATH`
+-NGX_PID_PATH=${NGX_PID_PATH:-logs/nginx.pid}
+-NGX_LOCK_PATH=${NGX_LOCK_PATH:-logs/nginx.lock}
++NGX_PID_PATH=${NGX_PID_PATH:-logs/nginx-catap.pid}
++NGX_LOCK_PATH=${NGX_LOCK_PATH:-logs/nginx-catap.lock}
+ 
+ if [ ".$NGX_ERROR_LOG_PATH" = ".stderr" ]; then
+     NGX_ERROR_LOG_PATH=
+Index: nginx-catap/nginx/configure
+===================================================================
+--- nginx-catap.orig/nginx/configure
++++ nginx-catap/nginx/configure
+@@ -60,7 +60,7 @@ fi
+ 
+ case ".$NGX_PREFIX" in
+     .)
+-        NGX_PREFIX=${NGX_PREFIX:-/usr/local/nginx}
++        NGX_PREFIX=${NGX_PREFIX:-/usr/local/nginx-catap}
+         have=NGX_PREFIX value="\"$NGX_PREFIX/\"" . auto/define
+     ;;
+ 

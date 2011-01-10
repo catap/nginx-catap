@@ -1,0 +1,24 @@
+PATCH_PATH=./patches
+PATCH_SERIES=${PATCH_PATH}/series
+
+default:	build
+
+clean: pre-clean unapply
+
+pre-clean:
+	$(MAKE) -C nginx clean
+
+build: apply
+	$(MAKE) -C nginx build
+
+install:
+	$(MAKE) -C nginx install
+
+upgrade:
+	$(MAKE) -C nginx upgrade
+
+apply:
+	$(MAKE) -C patches apply
+
+unapply:
+	$(MAKE) -C patches unapply
