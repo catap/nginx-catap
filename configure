@@ -5,7 +5,10 @@ pushd $(dirname $0) > /dev/null
 make apply
 
 pushd nginx > /dev/null
-./configure $@
+./configure \
+    $(cat ../modules/enable | \
+    while read module; do echo "--add-module=../modules/$module"; done) \
+    $@
 popd > /dev/null
 
 popd > /dev/null

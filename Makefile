@@ -1,6 +1,3 @@
-PATCH_PATH=./patches
-PATCH_SERIES=${PATCH_PATH}/series
-
 default:	build
 
 clean: pre-clean unapply
@@ -24,4 +21,5 @@ unapply:
 	$(MAKE) -C patches unapply
 
 test: build
-	TEST_NGINX_BINARY=../nginx/objs/nginx-catap prove tests
+	@TEST_NGINX_BINARY=../nginx/objs/nginx-catap prove tests
+	make -C modules test
