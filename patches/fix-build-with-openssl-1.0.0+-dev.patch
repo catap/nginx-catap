@@ -1,0 +1,21 @@
+Fix nginx for build with development version of openssl.
+
+Format of openssl version is MNNFFPPS: major minor fix patch status
+The status nibble has one of the values 0 for development, 1 to e for betas
+1 to 14, and f for release.  The patch level is exactly that.
+
+First release with new interface is a OpenSSL_1_0_0
+Index: nginx-catap/nginx/src/event/ngx_event_openssl.c
+===================================================================
+--- nginx-catap.orig/nginx/src/event/ngx_event_openssl.c
++++ nginx-catap/nginx/src/event/ngx_event_openssl.c
+@@ -560,7 +560,8 @@ ngx_ssl_handshake(ngx_connection_t *c)
+ #if (NGX_DEBUG)
+         {
+         char         buf[129], *s, *d;
+-#if OPENSSL_VERSION_NUMBER >= 0x1000000fL
++
++#if OPENSSL_VERSION_NUMBER >= 0x10000000L
+         const
+ #endif
+         SSL_CIPHER  *cipher;
