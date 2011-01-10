@@ -1,3 +1,6 @@
 [submodule "nginx"]
 	path = nginx
 	url = git://github.com/catap/nginx-sysoev.git
+[submodule "tests"]
+	path = tests
+	url = git://github.com/catap/nginx-tests.git
