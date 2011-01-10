@@ -4,3 +4,6 @@
 [submodule "tests"]
 	path = tests
 	url = git://github.com/catap/nginx-tests.git
+[submodule "modules/ngx_http_response_module"]
+	path = modules/ngx_http_response_module
+	url = git://github.com/catap/ngx_http_response_module.git
