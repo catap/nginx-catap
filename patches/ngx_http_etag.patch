@@ -1,0 +1,456 @@
+Index: nginx-catap/nginx/src/http/modules/ngx_http_empty_gif_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_empty_gif_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_empty_gif_module.c
+@@ -130,6 +130,10 @@ ngx_http_empty_gif_handler(ngx_http_requ
+     cv.value.data = ngx_empty_gif;
+     r->headers_out.last_modified_time = 23349600;
+ 
++    r->headers_out.etag_size = 40;
++    r->headers_out.etag_time = 5;
++    r->headers_out.etag_uniq = 6535;
++
+     return ngx_http_send_response(r, NGX_HTTP_OK, &ngx_http_gif_type, &cv);
+ }
+ 
+Index: nginx-catap/nginx/src/http/modules/ngx_http_flv_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_flv_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_flv_module.c
+@@ -185,6 +185,10 @@ ngx_http_flv_handler(ngx_http_request_t 
+     r->headers_out.content_length_n = len;
+     r->headers_out.last_modified_time = of.mtime;
+ 
++    r->headers_out.etag_size = of.size;
++    r->headers_out.etag_time = of.mtime;
++    r->headers_out.etag_uniq = of.uniq;
++
+     if (ngx_http_set_content_type(r) != NGX_OK) {
+         return NGX_HTTP_INTERNAL_SERVER_ERROR;
+     }
+Index: nginx-catap/nginx/src/http/modules/ngx_http_gzip_static_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_gzip_static_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_gzip_static_module.c
+@@ -198,6 +198,10 @@ ngx_http_gzip_static_handler(ngx_http_re
+     r->headers_out.content_length_n = of.size;
+     r->headers_out.last_modified_time = of.mtime;
+ 
++    r->headers_out.etag_size = of.size;
++    r->headers_out.etag_time = of.mtime;
++    r->headers_out.etag_uniq = of.uniq;
++
+     if (ngx_http_set_content_type(r) != NGX_OK) {
+         return NGX_HTTP_INTERNAL_SERVER_ERROR;
+     }
+Index: nginx-catap/nginx/src/http/modules/ngx_http_not_modified_filter_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_not_modified_filter_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_not_modified_filter_module.c
+@@ -62,7 +62,8 @@ ngx_http_not_modified_header_filter(ngx_
+         return ngx_http_test_precondition(r);
+     }
+ 
+-    if (r->headers_in.if_modified_since) {
++    if (r->headers_in.if_modified_since
++        || r->headers_in.if_match) {
+         return ngx_http_test_not_modified(r);
+     }
+ 
+@@ -93,6 +94,7 @@ ngx_http_test_precondition(ngx_http_requ
+ static ngx_int_t
+ ngx_http_test_not_modified(ngx_http_request_t *r)
+ {
++    u_char                    *p, *etag;
+     time_t                     ims;
+     ngx_http_core_loc_conf_t  *clcf;
+ 
+@@ -102,6 +104,28 @@ ngx_http_test_not_modified(ngx_http_requ
+         return ngx_http_next_header_filter(r);
+     }
+ 
++    if (r->headers_in.if_match) {
++        etag = ngx_palloc(r->pool, NGX_OFF_T_LEN + sizeof("_") - 1
++                          + NGX_TIME_T_LEN + sizeof("_") - 1 + NGX_INT_T_LEN);
++
++        if (etag == NULL) {
++            return NGX_ERROR;
++        }
++
++        p = ngx_sprintf(etag, "%XO-%XM-%Xd",
++                        r->headers_out.etag_size,
++                        r->headers_out.etag_time,
++                        r->headers_out.etag_uniq);
++
++        if (ngx_strncmp(r->headers_in.if_match->value.data, etag,
++                        (ngx_uint_t)(etag - p) > r->headers_in.if_match->value.len ?
++                        (ngx_uint_t)(etag - p) : r->headers_in.if_match->value.len)) {
++            return ngx_http_next_header_filter(r);
++        }
++
++        goto  not_modified;
++    }
++
+     ims = ngx_http_parse_time(r->headers_in.if_modified_since->value.data,
+                               r->headers_in.if_modified_since->value.len);
+ 
+@@ -117,6 +141,8 @@ ngx_http_test_not_modified(ngx_http_requ
+         }
+     }
+ 
++ not_modified:
++
+     r->headers_out.status = NGX_HTTP_NOT_MODIFIED;
+     r->headers_out.status_line.len = 0;
+     r->headers_out.content_type.len = 0;
+Index: nginx-catap/nginx/src/http/modules/ngx_http_range_filter_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_range_filter_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_range_filter_module.c
+@@ -146,6 +146,7 @@ static ngx_int_t
+ ngx_http_range_header_filter(ngx_http_request_t *r)
+ {
+     time_t                        if_range;
++    u_char                       *p, *etag;
+     ngx_int_t                     rc;
+     ngx_http_range_filter_ctx_t  *ctx;
+ 
+@@ -172,13 +173,39 @@ ngx_http_range_header_filter(ngx_http_re
+         if_range = ngx_http_parse_time(r->headers_in.if_range->value.data,
+                                        r->headers_in.if_range->value.len);
+ 
+-        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+-                       "http ir:%d lm:%d",
+-                       if_range, r->headers_out.last_modified_time);
++	if (if_range != NGX_ERROR) {
++
++            ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
++	                   "http ir:%d lm:%d",
++                           if_range, r->headers_out.last_modified_time);
++
++            if (if_range != r->headers_out.last_modified_time) {
++                goto next_filter;
++            }
++	}
++    }
+ 
+-        if (if_range != r->headers_out.last_modified_time) {
++    if (r->headers_in.if_range && r->headers_out.etag_size != -1
++        && r->headers_out.etag_time != -1
++        && r->headers_out.etag_uniq != (ngx_file_uniq_t) -1) {
++        etag = ngx_palloc(r->pool, NGX_OFF_T_LEN + sizeof("_") - 1
++                       + NGX_TIME_T_LEN + sizeof("_") - 1 + NGX_INT_T_LEN);
++
++	if (etag == NULL) {
++            return NGX_ERROR;
++	}
++
++        p = ngx_sprintf(etag, "%XO-%XM-%Xd",
++                        r->headers_out.etag_size,
++                        r->headers_out.etag_time,
++                        r->headers_out.etag_uniq);
++
++	if (ngx_strncmp(r->headers_in.if_match->value.data, etag,
++                        (ngx_uint_t)(etag - p) > r->headers_in.if_range->value.len ?
++                        (ngx_uint_t)(etag - p) : r->headers_in.if_range->value.len)) {
+             goto next_filter;
+         }
++
+     }
+ 
+     ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_range_filter_ctx_t));
+Index: nginx-catap/nginx/src/http/modules/ngx_http_ssi_filter_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_ssi_filter_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_ssi_filter_module.c
+@@ -358,6 +358,7 @@ ngx_http_ssi_header_filter(ngx_http_requ
+         ngx_http_clear_content_length(r);
+         ngx_http_clear_last_modified(r);
+         ngx_http_clear_accept_ranges(r);
++        ngx_http_clear_etag(r);
+     }
+ 
+     return ngx_http_next_header_filter(r);
+Index: nginx-catap/nginx/src/http/modules/ngx_http_static_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_static_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_static_module.c
+@@ -209,6 +209,10 @@ ngx_http_static_handler(ngx_http_request
+     r->headers_out.content_length_n = of.size;
+     r->headers_out.last_modified_time = of.mtime;
+ 
++    r->headers_out.etag_size = of.size;
++    r->headers_out.etag_time = of.mtime;
++    r->headers_out.etag_uniq = of.uniq;
++
+     if (ngx_http_set_content_type(r) != NGX_OK) {
+         return NGX_HTTP_INTERNAL_SERVER_ERROR;
+     }
+Index: nginx-catap/nginx/src/http/modules/ngx_http_sub_filter_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_sub_filter_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_sub_filter_module.c
+@@ -167,6 +167,7 @@ ngx_http_sub_header_filter(ngx_http_requ
+     if (r == r->main) {
+         ngx_http_clear_content_length(r);
+         ngx_http_clear_last_modified(r);
++        ngx_http_clear_etag(r);
+     }
+ 
+     return ngx_http_next_header_filter(r);
+Index: nginx-catap/nginx/src/http/modules/ngx_http_xslt_filter_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_xslt_filter_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_xslt_filter_module.c
+@@ -301,6 +301,7 @@ ngx_http_xslt_send(ngx_http_request_t *r
+         }
+ 
+         ngx_http_clear_last_modified(r);
++        ngx_http_clear_etag(r);
+     }
+ 
+     rc = ngx_http_next_header_filter(r);
+Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_core_module.c
++++ nginx-catap/nginx/src/http/ngx_http_core_module.c
+@@ -2222,6 +2222,7 @@ ngx_http_subrequest(ngx_http_request_t *
+     ngx_http_clear_content_length(sr);
+     ngx_http_clear_accept_ranges(sr);
+     ngx_http_clear_last_modified(sr);
++    ngx_http_clear_etag(sr);
+ 
+     sr->request_body = r->request_body;
+ 
+Index: nginx-catap/nginx/src/http/ngx_http_core_module.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_core_module.h
++++ nginx-catap/nginx/src/http/ngx_http_core_module.h
+@@ -522,5 +522,15 @@ extern ngx_str_t  ngx_http_core_get_meth
+         r->headers_out.last_modified = NULL;                                  \
+     }
+ 
++#define ngx_http_clear_etag(r)                                                \
++                                                                              \
++    r->headers_out.etag_size = -1;                                            \
++    r->headers_out.etag_time = -1;                                            \
++    r->headers_out.etag_uniq = (ngx_file_uniq_t) -1;                          \
++    if (r->headers_out.etag) {                                                \
++        r->headers_out.etag->hash = 0;                                        \
++        r->headers_out.etag = NULL;                                           \
++    }
++
+ 
+ #endif /* _NGX_HTTP_CORE_H_INCLUDED_ */
+Index: nginx-catap/nginx/src/http/ngx_http_header_filter_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_header_filter_module.c
++++ nginx-catap/nginx/src/http/ngx_http_header_filter_module.c
+@@ -198,6 +198,20 @@ ngx_http_header_filter(ngx_http_request_
+         }
+     }
+ 
++    if (r->headers_out.etag_size != -1 ||
++	r->headers_out.etag_time != -1 ||
++	r->headers_out.etag_uniq != (ngx_file_uniq_t) -1) {
++        if (r->headers_out.status != NGX_HTTP_OK
++            && r->headers_out.status != NGX_HTTP_PARTIAL_CONTENT
++            && r->headers_out.status != NGX_HTTP_NOT_MODIFIED)
++        {
++            r->headers_out.etag_size = -1;
++            r->headers_out.etag_time = -1;
++            r->headers_out.etag_uniq = (ngx_file_uniq_t) -1;
++            r->headers_out.etag = NULL;
++	}
++    }
++
+     len = sizeof("HTTP/1.x ") - 1 + sizeof(CRLF) - 1
+           /* the end of the header */
+           + sizeof(CRLF) - 1;
+@@ -227,6 +241,10 @@ ngx_http_header_filter(ngx_http_request_
+                 r->headers_out.last_modified = NULL;
+                 r->headers_out.content_length = NULL;
+                 r->headers_out.content_length_n = -1;
++                r->headers_out.etag_size = 1;
++                r->headers_out.etag_time = 1;
++                r->headers_out.etag_uniq = 1;
++                r->headers_out.etag = NULL;
+             }
+ 
+             status -= NGX_HTTP_OK;
+@@ -311,6 +329,15 @@ ngx_http_header_filter(ngx_http_request_
+ 
+     c = r->connection;
+ 
++    if (r->headers_out.etag == NULL
++        && r->headers_out.etag_size != -1
++        && r->headers_out.etag_time != -1
++        && r->headers_out.etag_uniq != (ngx_file_uniq_t) -1)
++    {
++        len += sizeof("ETag: ") - 1 + NGX_OFF_T_LEN + sizeof("_") - 1
++               + NGX_TIME_T_LEN + sizeof("_") - 1 + NGX_INT_T_LEN + sizeof(CRLF) - 1;
++    }
++
+     if (r->headers_out.location
+         && r->headers_out.location->value.len
+         && r->headers_out.location->value.data[0] == '/')
+@@ -514,6 +541,17 @@ ngx_http_header_filter(ngx_http_request_
+         *b->last++ = CR; *b->last++ = LF;
+     }
+ 
++    if (r->headers_out.etag == NULL
++        && r->headers_out.etag_size != -1
++        && r->headers_out.etag_time != -1
++        && r->headers_out.etag_uniq != (ngx_file_uniq_t) -1)
++    {
++        b->last = ngx_sprintf(b->last, "ETag: %XO-%XM-%Xd" CRLF,
++                              r->headers_out.etag_size,
++                              r->headers_out.etag_time,
++                              r->headers_out.etag_uniq);
++    }
++
+     if (host.data) {
+ 
+         p = b->last + sizeof("Location: ") - 1;
+Index: nginx-catap/nginx/src/http/ngx_http_request.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_request.c
++++ nginx-catap/nginx/src/http/ngx_http_request.c
+@@ -92,6 +92,10 @@ ngx_http_header_t  ngx_http_headers_in[]
+                  offsetof(ngx_http_headers_in_t, if_unmodified_since),
+                  ngx_http_process_unique_header_line },
+ 
++    { ngx_string("If-Match"),
++                 offsetof(ngx_http_headers_in_t, if_match),
++                 ngx_http_process_unique_header_line },
++
+     { ngx_string("User-Agent"), offsetof(ngx_http_headers_in_t, user_agent),
+                  ngx_http_process_user_agent },
+ 
+@@ -498,6 +502,9 @@ ngx_http_init_request(ngx_event_t *rev)
+     r->headers_in.keep_alive_n = -1;
+     r->headers_out.content_length_n = -1;
+     r->headers_out.last_modified_time = -1;
++    r->headers_out.etag_size = -1;
++    r->headers_out.etag_time = -1;
++    r->headers_out.etag_uniq = (ngx_file_uniq_t) -1;
+ 
+     r->uri_changes = NGX_HTTP_MAX_URI_CHANGES + 1;
+     r->subrequests = NGX_HTTP_MAX_SUBREQUESTS + 1;
+Index: nginx-catap/nginx/src/http/ngx_http_request.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_request.h
++++ nginx-catap/nginx/src/http/ngx_http_request.h
+@@ -168,6 +168,7 @@ typedef struct {
+     ngx_table_elt_t                  *connection;
+     ngx_table_elt_t                  *if_modified_since;
+     ngx_table_elt_t                  *if_unmodified_since;
++    ngx_table_elt_t                  *if_match;
+     ngx_table_elt_t                  *user_agent;
+     ngx_table_elt_t                  *referer;
+     ngx_table_elt_t                  *content_length;
+@@ -261,6 +262,10 @@ typedef struct {
+     off_t                             content_length_n;
+     time_t                            date_time;
+     time_t                            last_modified_time;
++
++    off_t                             etag_size;
++    time_t                            etag_time;
++    ngx_file_uniq_t                   etag_uniq;
+ } ngx_http_headers_out_t;
+ 
+ 
+Index: nginx-catap/nginx/src/http/ngx_http_special_response.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_special_response.c
++++ nginx-catap/nginx/src/http/ngx_http_special_response.c
+@@ -627,6 +627,7 @@ ngx_http_send_special_response(ngx_http_
+ 
+     ngx_http_clear_accept_ranges(r);
+     ngx_http_clear_last_modified(r);
++    ngx_http_clear_etag(r);
+ 
+     rc = ngx_http_send_header(r);
+ 
+@@ -725,6 +726,7 @@ ngx_http_send_refresh(ngx_http_request_t
+ 
+     ngx_http_clear_accept_ranges(r);
+     ngx_http_clear_last_modified(r);
++    ngx_http_clear_etag(r);
+ 
+     rc = ngx_http_send_header(r);
+ 
+Index: nginx-catap/nginx/src/http/ngx_http_variables.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_variables.c
++++ nginx-catap/nginx/src/http/ngx_http_variables.c
+@@ -79,6 +79,8 @@ static ngx_int_t ngx_http_variable_sent_
+     ngx_http_variable_value_t *v, uintptr_t data);
+ static ngx_int_t ngx_http_variable_sent_last_modified(ngx_http_request_t *r,
+     ngx_http_variable_value_t *v, uintptr_t data);
++static ngx_int_t ngx_http_variable_sent_etag(ngx_http_request_t *r,
++    ngx_http_variable_value_t *v, uintptr_t data);
+ static ngx_int_t ngx_http_variable_sent_connection(ngx_http_request_t *r,
+     ngx_http_variable_value_t *v, uintptr_t data);
+ static ngx_int_t ngx_http_variable_sent_keep_alive(ngx_http_request_t *r,
+@@ -230,6 +232,9 @@ static ngx_http_variable_t  ngx_http_cor
+     { ngx_string("sent_http_last_modified"), NULL,
+       ngx_http_variable_sent_last_modified, 0, 0, 0 },
+ 
++    { ngx_string("sent_http_etag"), NULL,
++      ngx_http_variable_sent_etag, 0, 0, 0 },
++
+     { ngx_string("sent_http_connection"), NULL,
+       ngx_http_variable_sent_connection, 0, 0, 0 },
+ 
+@@ -1442,6 +1447,50 @@ ngx_http_variable_sent_last_modified(ngx
+ 
+ 
+ static ngx_int_t
++ngx_http_variable_sent_etag(ngx_http_request_t *r,
++    ngx_http_variable_value_t *v, uintptr_t data)
++{
++    u_char  *p;
++
++    if (r->headers_out.etag) {
++        v->len = r->headers_out.etag->value.len;
++        v->valid = 1;
++        v->no_cacheable = 0;
++        v->not_found = 0;
++        v->data = r->headers_out.etag->value.data;
++
++        return NGX_OK;
++    }
++
++    if (r->headers_out.etag_size >= 0 &&
++        r->headers_out.etag_time >= 0 &&
++        (ngx_int_t)r->headers_out.etag_uniq >= 0) {
++        p = ngx_pnalloc(r->pool,
++                   sizeof("ETag: ") - 1 + NGX_OFF_T_LEN + sizeof("_") - 1
++                   + NGX_TIME_T_LEN + sizeof("_") - 1 + NGX_INT_T_LEN);
++        if (p == NULL) {
++            return NGX_ERROR;
++        }
++
++        v->len = ngx_sprintf(p, "ETag: %XO-%XM-%Xd",
++                             r->headers_out.etag_size,
++                             r->headers_out.etag_time,
++                             r->headers_out.etag_uniq) - p;
++        v->valid = 1;
++        v->no_cacheable = 0;
++        v->not_found = 0;
++        v->data = p;
++
++        return NGX_OK;
++    }
++
++    v->not_found = 1;
++
++    return NGX_OK;
++}
++
++
++static ngx_int_t
+ ngx_http_variable_sent_connection(ngx_http_request_t *r,
+     ngx_http_variable_value_t *v, uintptr_t data)
+ {
