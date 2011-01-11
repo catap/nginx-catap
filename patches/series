@@ -1,3 +1,4 @@
 rename-to-nginx-catap.patch
 fix-build-with-openssl-1.0.0+-dev.patch
 ngx_prealloc.patch
+timestamp_http_variable.patch

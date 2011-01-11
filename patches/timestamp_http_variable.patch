@@ -1,0 +1,50 @@
+Index: nginx-catap/nginx/src/http/ngx_http_variables.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_variables.c
++++ nginx-catap/nginx/src/http/ngx_http_variables.c
+@@ -92,6 +92,8 @@ static ngx_int_t ngx_http_variable_hostn
+     ngx_http_variable_value_t *v, uintptr_t data);
+ static ngx_int_t ngx_http_variable_pid(ngx_http_request_t *r,
+     ngx_http_variable_value_t *v, uintptr_t data);
++static ngx_int_t ngx_http_variable_timestamp(ngx_http_request_t *r,
++    ngx_http_variable_value_t *v, uintptr_t data);
+ 
+ /*
+  * TODO:
+@@ -254,6 +256,9 @@ static ngx_http_variable_t  ngx_http_cor
+     { ngx_string("pid"), NULL, ngx_http_variable_pid,
+       0, 0, 0 },
+ 
++    { ngx_string("timestamp"), NULL, ngx_http_variable_timestamp,
++      0, 0, 0 },
++
+     { ngx_null_string, NULL, NULL, 0, 0, 0 }
+ };
+ 
+@@ -1743,6 +1748,26 @@ ngx_http_regex_compile(ngx_conf_t *cf, n
+     return re;
+ }
+ 
++static ngx_int_t
++ngx_http_variable_timestamp(ngx_http_request_t *r,
++    ngx_http_variable_value_t *v, uintptr_t data)
++{
++    u_char  *p;
++
++    p = ngx_pnalloc(r->pool, NGX_INT64_LEN);
++    if (p == NULL) {
++        return NGX_ERROR;
++    }
++
++    v->len = ngx_sprintf(p, "%T", ngx_time()) - p;
++    v->valid = 1;
++    v->no_cacheable = 0;
++    v->not_found = 0;
++    v->data = p;
++
++    return NGX_OK;
++}
++
+ 
+ ngx_int_t
+ ngx_http_regex_exec(ngx_http_request_t *r, ngx_http_regex_t *re, ngx_str_t *s)
