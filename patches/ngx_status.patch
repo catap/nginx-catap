@@ -1,0 +1,2425 @@
+Index: nginx-catap/nginx/auto/modules
+===================================================================
+--- nginx-catap.orig/nginx/auto/modules
++++ nginx-catap/nginx/auto/modules
+@@ -343,6 +343,19 @@ if [ $HTTP_STUB_STATUS = YES ]; then
+     HTTP_SRCS="$HTTP_SRCS src/http/modules/ngx_http_stub_status_module.c"
+ fi
+ 
++if [ $NGX_STATUS = YES ]; then
++    if [ $HTTP_STATUS_TXT = YES ]; then
++        have=NGX_STATUS_TXT . auto/have
++        HTTP_MODULES="$HTTP_MODULES $HTTP_STATUS_TXT_MODULE"
++        HTTP_SRCS="$HTTP_SRCS $HTTP_STATUS_TXT_SRCS"
++    fi
++    if [ $HTTP_STATUS_XML = YES ]; then
++        have=NGX_STATUS_XML . auto/have
++        HTTP_MODULES="$HTTP_MODULES $HTTP_STATUS_XML_MODULE"
++        HTTP_SRCS="$HTTP_SRCS $HTTP_STATUS_XML_SRCS"
++    fi
++fi
++
+ #if [ -r $NGX_OBJS/auto ]; then
+ #    . $NGX_OBJS/auto
+ #fi
+@@ -442,6 +455,14 @@ if [ $NGX_CPP_TEST = YES ]; then
+ fi
+ 
+ 
++if [ $NGX_STATUS = YES ]; then
++    have=NGX_STATUS . auto/have
++    modules="$modules $NGX_STATUS_MODULE"
++    CORE_SRCS="$CORE_SRCS $NGX_STATUS_SRCS"
++    CORE_DEPS="$CORE_DEPS $NGX_STATUS_DEPS"
++fi
++
++
+ cat << END                                    > $NGX_MODULES_C
+ 
+ #include <ngx_config.h>
+Index: nginx-catap/nginx/auto/options
+===================================================================
+--- nginx-catap.orig/nginx/auto/options
++++ nginx-catap/nginx/auto/options
+@@ -141,6 +141,10 @@ NGX_LIBATOMIC=NO
+ 
+ NGX_CPU_CACHE_LINE=
+ 
++NGX_STATUS=YES
++HTTP_STATUS_TXT=YES
++HTTP_STATUS_XML=YES
++
+ opt=
+ 
+ for option
+@@ -281,6 +285,10 @@ do
+         --with-libatomic)                NGX_LIBATOMIC=YES          ;;
+         --with-libatomic=*)              NGX_LIBATOMIC="$value"     ;;
+ 
++	--without-status)                NGX_STATUS=NO              ;;
++	--without-http_status_txt)       NGX_HTTP_STATUS_TXT=NO     ;;
++	--without-http_status_xml)       NGX_HTTP_STATUS_XML=NO     ;;
++
+         --test-build-devpoll)            NGX_TEST_BUILD_DEVPOLL=YES ;;
+         --test-build-eventport)          NGX_TEST_BUILD_EVENTPORT=YES ;;
+         --test-build-epoll)              NGX_TEST_BUILD_EPOLL=YES   ;;
+@@ -426,6 +434,10 @@ cat << END
+   --with-openssl=DIR                 set path to OpenSSL library sources
+   --with-openssl-opt=OPTIONS         set additional options for OpenSSL building
+ 
++  --without-status                   disable status
++  --without-http_status_txt          disable http_status_txt
++  --without-http_status_xml          disable http_status_xml
++
+   --with-debug                       enable the debugging logging
+ 
+ END
+Index: nginx-catap/nginx/auto/sources
+===================================================================
+--- nginx-catap.orig/nginx/auto/sources
++++ nginx-catap/nginx/auto/sources
+@@ -506,3 +506,13 @@ NGX_GOOGLE_PERFTOOLS_MODULE=ngx_google_p
+ NGX_GOOGLE_PERFTOOLS_SRCS=src/misc/ngx_google_perftools_module.c
+ 
+ NGX_CPP_TEST_SRCS=src/misc/ngx_cpp_test_module.cpp
++
++NGX_STATUS_MODULE=ngx_status_module
++NGX_STATUS_SRCS=src/core/ngx_status.c
++NGX_STATUS_DEPS=src/core/ngx_status.h
++
++HTTP_STATUS_TXT_MODULE=ngx_http_status_txt_module
++HTTP_STATUS_TXT_SRCS=src/http/modules/ngx_http_status_txt_module.c
++
++HTTP_STATUS_XML_MODULE=ngx_http_status_xml_module
++HTTP_STATUS_XML_SRCS=src/http/modules/ngx_http_status_xml_module.c
+Index: nginx-catap/nginx/src/core/ngx_core.h
+===================================================================
+--- nginx-catap.orig/nginx/src/core/ngx_core.h
++++ nginx-catap/nginx/src/core/ngx_core.h
+@@ -76,7 +76,9 @@ typedef void (*ngx_connection_handler_pt
+ #include <ngx_open_file_cache.h>
+ #include <ngx_os.h>
+ #include <ngx_connection.h>
+-
++#if (NGX_STATUS)
++#include <ngx_status.h>
++#endif
+ 
+ #define LF     (u_char) 10
+ #define CR     (u_char) 13
+Index: nginx-catap/nginx/src/core/ngx_status.c
+===================================================================
+--- /dev/null
++++ nginx-catap/nginx/src/core/ngx_status.c
+@@ -0,0 +1,289 @@
++
++/*
++ * Copyright (C) Kirill A. Korinskiy
++ */
++
++
++#include <ngx_config.h>
++#include <ngx_core.h>
++
++
++static void *ngx_status_module_create_conf(ngx_cycle_t *cycle);
++static char *ngx_status_module_init_conf(ngx_cycle_t *cycle, void *conf);
++
++static ngx_int_t ngx_status_module_init(ngx_cycle_t *cycle);
++
++typedef struct {
++    ngx_uint_t          window;
++    ngx_uint_t          count;
++    ngx_status_list_t **counters;
++} ngx_status_conf_t;
++
++
++static ngx_command_t  ngx_status_commands[] = {
++
++    { ngx_string("status_window"),
++      NGX_MAIN_CONF|NGX_DIRECT_CONF|NGX_CONF_TAKE1,
++      ngx_conf_set_num_slot,
++      0,
++      offsetof(ngx_status_conf_t, window),
++      NULL },
++
++      ngx_null_command
++};
++
++
++static ngx_core_module_t  ngx_status_module_ctx = {
++    ngx_string("ngx_status"),
++    ngx_status_module_create_conf,
++    ngx_status_module_init_conf
++};
++
++
++ngx_module_t  ngx_status_module = {
++    NGX_MODULE_V1,
++    &ngx_status_module_ctx,     /* module context */
++    ngx_status_commands,        /* module directives */
++    NGX_CORE_MODULE,            /* module type */
++    NULL,                       /* init master */
++    ngx_status_module_init,     /* init module */
++    NULL,                       /* init process */
++    NULL,                       /* init thread */
++    NULL,                       /* exit thread */
++    NULL,                       /* exit process */
++    NULL,                       /* exit master */
++    NGX_MODULE_V1_PADDING
++};
++
++
++ngx_int_t
++ngx_status_add_counter(ngx_cycle_t *cycle, ngx_module_t *module,
++    ngx_status_counter_t *counter)
++{
++    ngx_status_conf_t *conf;
++    ngx_status_list_t *c, *cc;
++
++    conf = (ngx_status_conf_t *) ngx_get_conf(cycle->conf_ctx, ngx_status_module);
++
++    c = ngx_palloc(cycle->pool, sizeof(ngx_status_list_t));
++    if (c == NULL) {
++        return NGX_ERROR;
++    }
++
++    c->counter = counter;
++    c->next = NULL;
++
++    if (conf->counters[module->index] == NULL) {
++        conf->counters[module->index] = c;
++    } else {
++        cc = conf->counters[module->index];
++
++        for (; cc->next; cc = cc->next);
++
++        cc->next = c;
++    }
++
++    conf->count++;
++
++    return NGX_OK;
++}
++
++
++ngx_int_t
++ngx_status_add_child(ngx_cycle_t *cycle, ngx_status_counter_t *parent,
++    ngx_status_counter_t *child)
++{
++    ngx_status_conf_t *conf;
++    ngx_status_list_t *c, *cc;
++
++    conf = (ngx_status_conf_t *) ngx_get_conf(cycle->conf_ctx, ngx_status_module);
++
++    c = ngx_palloc(cycle->pool, sizeof(ngx_status_list_t));
++    if (c == NULL) {
++        return NGX_ERROR;
++    }
++
++    c->counter = child;
++    c->next = NULL;
++
++    if (parent->childs == NULL) {
++        parent->childs = c;
++    } else {
++        cc = parent->childs;
++
++        for (; cc->next; cc = cc->next);
++
++        cc->next = c;
++    }
++
++    conf->count++;
++
++    return NGX_OK;
++}
++
++
++ngx_int_t
++ngx_status_fetch_add(ngx_status_counter_t *counter)
++{
++    ngx_atomic_t      *window;
++    ngx_status_conf_t *conf;
++
++    conf = (ngx_status_conf_t *) ngx_get_conf(ngx_cycle->conf_ctx,
++                                              ngx_status_module);
++
++    window = counter->windows + (ngx_time() % (2 * conf->window));
++
++    ngx_atomic_fetch_add(window, 1);
++
++    if (window - conf->window > counter->windows) {
++        *(window - conf->window) = 0;
++    } else {
++        *(window + conf->window) = 0;
++    }
++
++    ngx_atomic_fetch_add(counter->accumulate, 1);
++
++    return NGX_OK;
++}
++
++
++ngx_int_t
++ngx_status_get_accumulate_value(ngx_status_counter_t *counter)
++{
++    return *(counter->accumulate);
++}
++
++
++ngx_int_t
++ngx_status_get_periodic_value(ngx_status_counter_t *counter, ngx_uint_t period)
++{
++    ngx_int_t          sum ;
++    ngx_atomic_t      *start, *last;
++    ngx_status_conf_t *conf;
++
++
++    conf = (ngx_status_conf_t *)
++        ngx_get_conf(ngx_cycle->conf_ctx, ngx_status_module);
++
++    if (period > conf->window) {
++        period = conf->window;
++    }
++
++    sum = 0;
++    last = counter->windows + 2 * conf->window;
++    start = counter->windows + (ngx_time() % (2 * conf->window));
++
++    for (; period; period--) {
++        sum += *start;
++        if (start - 1 < counter->windows) {
++            start = last;
++        } else {
++            start--;
++        }
++    }
++
++    return sum;
++}
++
++
++ngx_status_list_t **
++ngx_status_get_counters(ngx_cycle_t *cycle)
++{
++    return ((ngx_status_conf_t *)
++            ngx_get_conf(cycle->conf_ctx, ngx_status_module))->counters;
++}
++
++
++static void *
++ngx_status_module_create_conf(ngx_cycle_t *cycle)
++{
++    ngx_status_conf_t *scf;
++    ngx_uint_t         i;
++
++    scf = ngx_pcalloc(cycle->pool, sizeof(ngx_status_conf_t));
++    if (scf == NULL) {
++        return NULL;
++    }
++
++    scf->window = NGX_CONF_UNSET_UINT;
++
++    for (i = 0; ngx_modules[i]; i++);
++
++    scf->counters = ngx_pcalloc(cycle->pool, sizeof(ngx_status_list_t) * i);
++    if (scf->counters == NULL) {
++        return NULL;
++    }
++
++    scf->count = 0;
++
++    return scf;
++}
++
++
++static char *
++ngx_status_module_init_conf(ngx_cycle_t *cycle, void *conf)
++{
++    ngx_status_conf_t  *scf = conf;
++
++    ngx_conf_init_uint_value(scf->window, 300);
++
++    return NGX_CONF_OK;
++}
++
++static ngx_uint_t
++ngx_status_set_associating_memory(u_char *shared, size_t cl,
++    ngx_uint_t count, ngx_uint_t window, ngx_status_list_t *c, ngx_uint_t j)
++{
++    while (c) {
++        c->counter->accumulate = (ngx_atomic_t *)(shared + (j * cl));
++        c->counter->windows = (ngx_atomic_t *)(shared + (count * cl)
++                                               + (2 * j * cl * window));
++
++        j = ngx_status_set_associating_memory(shared, cl, count, window,
++                                              c->counter->childs, j + 1);
++
++        c = c->next;
++    }
++
++    return j;
++}
++
++
++static ngx_int_t
++ngx_status_module_init(ngx_cycle_t *cycle)
++{
++    u_char            *shared;
++    size_t             size, cl;
++    ngx_shm_t          shm;
++    ngx_uint_t         i, j;
++    ngx_status_conf_t *conf;
++
++    conf = (ngx_status_conf_t *) ngx_get_conf(cycle->conf_ctx, ngx_status_module);
++
++    if (!conf->count) {
++        return NGX_OK;
++    }
++
++    /* cl should be equal or bigger than cache line size */
++    cl = 128;
++
++    size = conf->count * cl + 2 * conf->window * conf->count * cl;
++
++    shm.size = size;
++    shm.name.len = sizeof("nginx_status_shared_zone");
++    shm.name.data = (u_char *) "nginx_status_shared_zone";
++    shm.log = cycle->log;
++
++    if (ngx_shm_alloc(&shm) != NGX_OK) {
++        return NGX_ERROR;
++    }
++
++    shared = shm.addr;
++
++    for (i = 0, j = 0; ngx_modules[i]; i++) {
++        j = ngx_status_set_associating_memory(shared, cl, conf->count,
++                conf->window, conf->counters[ngx_modules[i]->index], j);
++    }
++
++    return NGX_OK;
++}
+Index: nginx-catap/nginx/src/core/ngx_status.h
+===================================================================
+--- /dev/null
++++ nginx-catap/nginx/src/core/ngx_status.h
+@@ -0,0 +1,57 @@
++
++/*
++ * Copyright (C) Kirill A. Korinskiy
++ */
++
++
++#ifndef _NGX_STATUS_H_INCLUDED_
++#define _NGX_STATUS_H_INCLUDED_
++
++
++#include <ngx_config.h>
++#include <ngx_core.h>
++
++
++typedef struct ngx_status_list_s ngx_status_list_t;
++
++typedef struct {
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++    ngx_str_t          caption;
++    ngx_str_t          label_for_childs;
++#endif
++
++#if (NGX_STATUS_XML)
++    ngx_str_t          tag_name;
++    ngx_str_t          tag_value;
++    ngx_str_t          tag_for_childs;
++#endif
++
++    ngx_atomic_t      *accumulate;
++    ngx_atomic_t      *windows;
++    ngx_status_list_t *childs;
++} ngx_status_counter_t;
++
++struct ngx_status_list_s {
++    ngx_status_counter_t *counter;
++    ngx_status_list_t    *next;
++};
++
++extern ngx_module_t ngx_status_module;
++
++
++ngx_int_t ngx_status_add_counter(ngx_cycle_t *cycle, ngx_module_t *module,
++    ngx_status_counter_t *counter);
++
++ngx_int_t ngx_status_add_child(ngx_cycle_t *cycle, ngx_status_counter_t *parent,
++    ngx_status_counter_t *child);
++
++ngx_int_t ngx_status_fetch_add(ngx_status_counter_t *counter);
++
++ngx_int_t ngx_status_get_accumulate_value(ngx_status_counter_t *counter);
++ngx_int_t ngx_status_get_periodic_value(ngx_status_counter_t *counter,
++    ngx_uint_t period);
++
++ngx_status_list_t **ngx_status_get_counters(ngx_cycle_t *cycle);
++
++
++#endif /* _NGX_STATUS_H_INCLUDED_ */
+Index: nginx-catap/nginx/src/event/ngx_event.c
+===================================================================
+--- nginx-catap.orig/nginx/src/event/ngx_event.c
++++ nginx-catap/nginx/src/event/ngx_event.c
+@@ -57,7 +57,7 @@ ngx_int_t             ngx_accept_disable
+ ngx_file_t            ngx_accept_mutex_lock_file;
+ 
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+ 
+ ngx_atomic_t   ngx_stat_accepted0;
+ ngx_atomic_t  *ngx_stat_accepted = &ngx_stat_accepted0;
+@@ -496,7 +496,7 @@ ngx_event_module_init(ngx_cycle_t *cycle
+            + cl          /* ngx_connection_counter */
+            + cl;         /* ngx_temp_number */
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+ 
+     size += cl           /* ngx_stat_accepted */
+            + cl          /* ngx_stat_handled */
+@@ -540,7 +540,7 @@ ngx_event_module_init(ngx_cycle_t *cycle
+ 
+     ngx_random_number = (tp->msec << 16) + ngx_pid;
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+ 
+     ngx_stat_accepted = (ngx_atomic_t *) (shared + 3 * cl);
+     ngx_stat_handled = (ngx_atomic_t *) (shared + 4 * cl);
+Index: nginx-catap/nginx/src/event/ngx_event.h
+===================================================================
+--- nginx-catap.orig/nginx/src/event/ngx_event.h
++++ nginx-catap/nginx/src/event/ngx_event.h
+@@ -508,7 +508,7 @@ extern ngx_msec_t             ngx_accept
+ extern ngx_int_t              ngx_accept_disabled;
+ 
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+ 
+ extern ngx_atomic_t  *ngx_stat_accepted;
+ extern ngx_atomic_t  *ngx_stat_handled;
+Index: nginx-catap/nginx/src/event/ngx_event_accept.c
+===================================================================
+--- nginx-catap.orig/nginx/src/event/ngx_event_accept.c
++++ nginx-catap/nginx/src/event/ngx_event_accept.c
+@@ -99,7 +99,7 @@ ngx_event_accept(ngx_event_t *ev)
+             return;
+         }
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+         (void) ngx_atomic_fetch_add(ngx_stat_accepted, 1);
+ #endif
+ 
+@@ -117,7 +117,7 @@ ngx_event_accept(ngx_event_t *ev)
+             return;
+         }
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+         (void) ngx_atomic_fetch_add(ngx_stat_active, 1);
+ #endif
+ 
+@@ -222,7 +222,7 @@ ngx_event_accept(ngx_event_t *ev)
+ 
+         c->number = ngx_atomic_fetch_add(ngx_connection_counter, 1);
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+         (void) ngx_atomic_fetch_add(ngx_stat_handled, 1);
+ #endif
+ 
+@@ -413,7 +413,7 @@ ngx_close_accepted_connection(ngx_connec
+         ngx_destroy_pool(c->pool);
+     }
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+     (void) ngx_atomic_fetch_add(ngx_stat_active, -1);
+ #endif
+ }
+Index: nginx-catap/nginx/src/http/modules/ngx_http_status_txt_module.c
+===================================================================
+--- /dev/null
++++ nginx-catap/nginx/src/http/modules/ngx_http_status_txt_module.c
+@@ -0,0 +1,419 @@
++
++/*
++ * Copyright (C) Kirill A. Korinskiy
++ */
++
++
++#include <ngx_config.h>
++#include <ngx_core.h>
++#include <ngx_http.h>
++#include <nginx.h>
++
++
++typedef struct {
++    ngx_int_t  num;
++    ngx_str_t  value;
++} ngx_http_status_txt_period_t;
++
++typedef struct {
++    ngx_array_t  *periods;
++} ngx_http_status_txt_loc_conf_t;
++
++
++static void *ngx_http_status_txt_create_loc_conf(ngx_conf_t *cf);
++static char *ngx_http_status_txt_merge_loc_conf(ngx_conf_t *cf,
++    void *parent, void *child);
++
++static char *ngx_http_status_txt(ngx_conf_t *cf, ngx_command_t *cmd,
++                                 void *conf);
++
++static ngx_command_t  ngx_http_status_commands[] = {
++
++    { ngx_string("status_txt"),
++      NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
++      ngx_http_status_txt,
++      NGX_HTTP_LOC_CONF_OFFSET,
++      offsetof(ngx_http_status_txt_loc_conf_t, periods),
++      NULL },
++
++      ngx_null_command
++};
++
++
++static ngx_http_module_t  ngx_http_status_txt_module_ctx = {
++    NULL,                                  /* preconfiguration */
++    NULL,                                  /* postconfiguration */
++
++    NULL,                                  /* create main configuration */
++    NULL,                                  /* init main configuration */
++
++    NULL,                                  /* create server configuration */
++    NULL,                                  /* merge server configuration */
++
++    ngx_http_status_txt_create_loc_conf,   /* create location configuration */
++    ngx_http_status_txt_merge_loc_conf     /* merge location configuration */
++};
++
++
++ngx_module_t  ngx_http_status_txt_module = {
++    NGX_MODULE_V1,
++    &ngx_http_status_txt_module_ctx,       /* module context */
++    ngx_http_status_commands,              /* module directives */
++    NGX_HTTP_MODULE,                       /* module type */
++    NULL,                                  /* init master */
++    NULL,                                  /* init module */
++    NULL,                                  /* init process */
++    NULL,                                  /* init thread */
++    NULL,                                  /* exit thread */
++    NULL,                                  /* exit process */
++    NULL,                                  /* exit master */
++    NGX_MODULE_V1_PADDING
++};
++
++static ngx_time_t   last_configure;
++static ngx_str_t    last_configure_human_time;
++
++
++static ngx_int_t
++ngx_http_status_calcualte_len(ngx_status_list_t *c,
++    ngx_http_status_txt_period_t *period, ngx_uint_t level)
++{
++    ngx_uint_t size = 0;
++
++    while (c) {
++        size += level * (sizeof(" ") - 1);
++        size += sizeof(": ()\n") - 1 + c->counter->caption.len
++            + NGX_INT_T_LEN + NGX_INT_T_LEN;
++
++        if (!level) {
++            if (period->num) {
++                size += sizeof(", for last  seconds") - 1 + period->value.len;
++            } else {
++                size += sizeof(", momentary") - 1;
++            }
++        }
++
++        if (c->counter->childs) {
++            if (c->counter->label_for_childs.len) {
++                size += (level + 1) * (sizeof(" ") - 1) + sizeof(":\n") - 1
++                    + c->counter->label_for_childs.len;
++                size += ngx_http_status_calcualte_len(c->counter->childs,
++                                                      period, level + 2);
++            }
++            size += ngx_http_status_calcualte_len(c->counter->childs, period,
++                                                  level + 1);
++        }
++
++        c = c->next;
++    }
++
++    return size;
++}
++
++
++static u_char*
++ngx_http_status_write_counter(u_char *p, ngx_status_list_t *c,
++    ngx_http_status_txt_period_t *period, ngx_uint_t level)
++{
++    ngx_int_t  periodic_value;
++    ngx_uint_t i;
++
++    while (c) {
++        for (i = level; i; i--) {
++            *(p++) = ' ';
++        }
++
++        p = ngx_sprintf(p, "%V", &c->counter->caption);
++
++        if (!level) {
++            if (period->num) {
++                p = ngx_sprintf(p, ", for last %V seconds", &period->value);
++            } else {
++                p = ngx_sprintf(p, ", momentary", &period->value);
++            }
++        }
++
++        periodic_value = ngx_status_get_periodic_value(c->counter,
++                             period->num ? period->num : 1);
++
++        if (period->num) {
++            p = ngx_sprintf(p, ": %uA(%uA)",
++                            ngx_status_get_periodic_value(c->counter,
++                                                          period->num),
++                            periodic_value/period->num);
++        } else {
++            p = ngx_sprintf(p, ": %uA(%uA)",
++                            ngx_status_get_accumulate_value(c->counter),
++                            periodic_value);
++        }
++
++        *(p++) = '\n';
++
++        if (c->counter->childs) {
++            if (c->counter->label_for_childs.len) {
++                for (i = level + 1; i; i--) {
++                    *(p++) = ' ';
++                }
++                p = ngx_sprintf(p, "%V:\n", &c->counter->label_for_childs);
++                p = ngx_http_status_write_counter(p, c->counter->childs,
++                                                  period, level + 2);
++            } else {
++                p = ngx_http_status_write_counter(p, c->counter->childs,
++                                                  period, level + 1);
++            }
++        }
++
++        c = c->next;
++    }
++
++    return p;
++}
++
++
++static ngx_int_t ngx_http_status_txt_handler(ngx_http_request_t *r)
++{
++    size_t                     size;
++    ngx_int_t                  rc;
++    ngx_buf_t                 *b;
++    ngx_uint_t                 i, j;
++    ngx_chain_t                out;
++
++    ngx_atomic_int_t           ap, hn, ac, rq, rd, wr;
++
++    ngx_status_list_t        **counters, *c;
++
++    ngx_http_core_srv_conf_t  *cscf;
++
++    ngx_uint_t                 uptime, uptime_days, uptime_hours, uptime_minutes, uptime_seconds;
++
++    ngx_http_status_txt_period_t   *period;
++    ngx_http_status_txt_loc_conf_t *conf;
++
++    if (r->method != NGX_HTTP_GET && r->method != NGX_HTTP_HEAD) {
++        return NGX_HTTP_NOT_ALLOWED;
++    }
++
++    rc = ngx_http_discard_request_body(r);
++
++    if (rc != NGX_OK) {
++        return rc;
++    }
++
++    conf = ngx_http_get_module_loc_conf(r, ngx_http_status_txt_module);
++
++    cscf = ngx_http_get_module_srv_conf(r, ngx_http_core_module);
++    if (cscf == NULL) {
++      return NGX_ERROR;
++    }
++
++    uptime = ngx_time() - last_configure.sec;
++    uptime_days = uptime / 86400;
++    uptime -= uptime_days * 86400;
++    uptime_hours = uptime / 3600;
++    uptime -= uptime_hours * 3600;
++    uptime_minutes = uptime / 60;
++    uptime -= uptime_minutes * 60;
++    uptime_seconds = uptime;
++    uptime = ngx_time() - last_configure.sec;
++
++
++    counters = ngx_status_get_counters((ngx_cycle_t *)ngx_cycle);
++
++    r->headers_out.content_type.len = sizeof("text/plain") - 1;
++    r->headers_out.content_type.data = (u_char *) "text/plain";
++
++    if (r->method == NGX_HTTP_HEAD) {
++        r->headers_out.status = NGX_HTTP_OK;
++
++        rc = ngx_http_send_header(r);
++
++        if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
++            return rc;
++        }
++    }
++
++    size =  sizeof("Server " NGINX_VER " \n") - 1
++           + cscf->server_name.len
++           + sizeof("Last config reload:  ()\n") - 1 + NGX_INT_T_LEN
++           + last_configure_human_time.len
++           + sizeof("Uptime:  (d h m s)\n") - 1 + NGX_INT_T_LEN
++           + NGX_INT_T_LEN + NGX_INT_T_LEN + NGX_INT_T_LEN + NGX_INT_T_LEN;
++
++    size += sizeof("\nActive connections:  \n") + NGX_ATOMIC_T_LEN
++           + sizeof("server accepts handled requests\n") - 1
++           + 6 + 3 * NGX_ATOMIC_T_LEN
++           + sizeof("Reading:  Writing:  Waiting:  \n") + 3 * NGX_ATOMIC_T_LEN;
++
++    for (i = 0; ngx_modules[i]; i++) {
++        c = counters[ngx_modules[i]->index];
++
++        if (c == NULL) {
++            continue;
++        }
++
++        for (j = 0; j < conf->periods->nelts; j++) {
++            period = conf->periods->elts;
++
++            size += sizeof("\n") - 1;
++
++            size += ngx_http_status_calcualte_len(c, &period[j], 0);
++        }
++    }
++
++
++    b = ngx_create_temp_buf(r->pool, size);
++    if (b == NULL) {
++        return NGX_HTTP_INTERNAL_SERVER_ERROR;
++    }
++
++    out.buf = b;
++    out.next = NULL;
++
++    b->last = ngx_sprintf(b->last, "Server " NGINX_VER " %V\n",
++                          &cscf->server_name);
++
++    b->last = ngx_sprintf(b->last, "Last config reload: %uA (%V)\n",
++                          last_configure.sec,
++                          &last_configure_human_time);
++
++    b->last = ngx_sprintf(b->last, "Uptime: %uA (%uAd %uAh %uAm %uAs)\n",
++                          uptime, uptime_days, uptime_hours,
++                          uptime_minutes, uptime_seconds);
++
++    ap = *ngx_stat_accepted;
++    hn = *ngx_stat_handled;
++    ac = *ngx_stat_active;
++    rq = *ngx_stat_requests;
++    rd = *ngx_stat_reading;
++    wr = *ngx_stat_writing;
++
++    b->last = ngx_sprintf(b->last, "\nActive connections: %uA \n", ac);
++
++    b->last = ngx_cpymem(b->last, "server accepts handled requests\n",
++                         sizeof("server accepts handled requests\n") - 1);
++
++    b->last = ngx_sprintf(b->last, " %uA %uA %uA \n", ap, hn, rq);
++
++    b->last = ngx_sprintf(b->last, "Reading: %uA Writing: %uA Waiting: %uA \n",
++                          rd, wr, ac - (rd + wr));
++
++
++    for (i = 0; ngx_modules[i]; i++) {
++        c = counters[ngx_modules[i]->index];
++
++        if (c == NULL) {
++            continue;
++        }
++
++        for (j = 0; j < conf->periods->nelts; j++) {
++            period = conf->periods->elts;
++
++            b->last = ngx_sprintf(b->last, "\n");
++
++            b->last = ngx_http_status_write_counter(b->last, c, &period[j], 0);
++        }
++    }
++
++    r->headers_out.status = NGX_HTTP_OK;
++    r->headers_out.content_length_n = b->last - b->pos;
++
++    b->last_buf = 1;
++
++    rc = ngx_http_send_header(r);
++
++    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
++        return rc;
++    }
++
++    return ngx_http_output_filter(r, &out);
++}
++
++
++static void *
++ngx_http_status_txt_create_loc_conf(ngx_conf_t *cf)
++{
++    ngx_http_status_txt_loc_conf_t  *conf;
++
++    conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_status_txt_loc_conf_t));
++    if (conf == NULL) {
++        return NGX_CONF_ERROR;
++    }
++
++    return conf;
++}
++
++
++static char *
++ngx_http_status_txt_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
++{
++    ngx_http_status_txt_loc_conf_t  *prev = parent;
++    ngx_http_status_txt_loc_conf_t  *conf = child;
++
++    if (conf->periods == NULL) {
++        conf->periods = prev->periods;
++    }
++
++    return NGX_CONF_OK;
++}
++
++
++static char  *months[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
++                           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
++
++
++static char *ngx_http_status_txt(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
++{
++    u_char       *p = conf;
++    ngx_tm_t      tm;
++    ngx_str_t    *value;
++    ngx_uint_t    i;
++    ngx_array_t **periods;
++
++    ngx_http_core_loc_conf_t  *clcf;
++
++    ngx_http_status_txt_period_t *period;
++
++    periods = (ngx_array_t **) (p + cmd->offset);
++
++    value = cf->args->elts;
++
++    clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
++    clcf->handler = ngx_http_status_txt_handler;
++
++    last_configure = *ngx_cached_time;
++    last_configure_human_time.len = sizeof("28/May/1987 17:30:00 +0400") - 1;
++    last_configure_human_time.data = ngx_palloc(cf->pool,
++                                                last_configure_human_time.len);
++    if (last_configure_human_time.data == NULL) {
++        return NGX_CONF_ERROR;
++    }
++
++    ngx_gmtime(ngx_cached_time->sec + ngx_cached_time->gmtoff * 60, &tm);
++
++    (void) ngx_sprintf(last_configure_human_time.data,
++                       "%02d/%s/%d %02d:%02d:%02d %c%02d%02d",
++                       tm.ngx_tm_mday, months[tm.ngx_tm_mon - 1],
++                       tm.ngx_tm_year, tm.ngx_tm_hour,
++                       tm.ngx_tm_min, tm.ngx_tm_sec,
++                       ngx_cached_time->gmtoff < 0 ? '-' : '+',
++                       ngx_abs(ngx_cached_time->gmtoff / 60),
++                       ngx_abs(ngx_cached_time->gmtoff % 60));
++
++    *periods = ngx_array_create(cf->pool, cf->args->nelts - 1,
++                                sizeof(ngx_http_status_txt_period_t));
++    if (*periods == NULL) {
++        return NGX_CONF_ERROR;
++    }
++
++    for (i = 1; i < cf->args->nelts; i++) {
++        period = ngx_array_push(*periods);
++        period->value = value[i];
++        period->num = ngx_atoi(period->value.data, period->value.len);
++
++        if (period->num == NGX_ERROR) {
++            return NGX_CONF_ERROR;
++        }
++    }
++
++    return NGX_CONF_OK;
++}
+Index: nginx-catap/nginx/src/http/modules/ngx_http_status_xml_module.c
+===================================================================
+--- /dev/null
++++ nginx-catap/nginx/src/http/modules/ngx_http_status_xml_module.c
+@@ -0,0 +1,511 @@
++
++/*
++ * Copyright (C) Kirill A. Korinskiy
++ */
++
++
++#include <ngx_config.h>
++#include <ngx_core.h>
++#include <ngx_http.h>
++#include <nginx.h>
++
++
++#define ngx_http_status_xml_len_space(level)   (2 * (level) * (sizeof(" ") - 1))
++
++#define ngx_http_status_xml_add_space(p, level)  { \
++        ngx_int_t i;                               \
++        for (i = 2 * (level); i; i--) {            \
++            *(p++) = ' ';                          \
++        }                                          \
++    }
++
++
++typedef struct {
++    ngx_int_t  num;
++    ngx_str_t  value;
++} ngx_http_status_xml_period_t;
++
++typedef struct {
++    ngx_array_t  *periods;
++    ngx_str_t     xsl_uri;
++} ngx_http_status_xml_loc_conf_t;
++
++
++static void *ngx_http_status_xml_create_loc_conf(ngx_conf_t *cf);
++static char *ngx_http_status_xml_merge_loc_conf(ngx_conf_t *cf,
++    void *parent, void *child);
++
++static char *ngx_http_status_xml(ngx_conf_t *cf, ngx_command_t *cmd,
++                                 void *conf);
++
++static ngx_command_t  ngx_http_status_commands[] = {
++
++    { ngx_string("status_xml"),
++      NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
++      ngx_http_status_xml,
++      NGX_HTTP_LOC_CONF_OFFSET,
++      offsetof(ngx_http_status_xml_loc_conf_t, periods),
++      NULL },
++
++    { ngx_string("status_xml_xsl_uri"),
++      NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
++      ngx_conf_set_str_slot,
++      NGX_HTTP_LOC_CONF_OFFSET,
++      offsetof(ngx_http_status_xml_loc_conf_t, xsl_uri),
++      NULL },
++
++      ngx_null_command
++};
++
++
++static ngx_http_module_t  ngx_http_status_xml_module_ctx = {
++    NULL,                                  /* preconfiguration */
++    NULL,                                  /* postconfiguration */
++
++    NULL,                                  /* create main configuration */
++    NULL,                                  /* init main configuration */
++
++    NULL,                                  /* create server configuration */
++    NULL,                                  /* merge server configuration */
++
++    ngx_http_status_xml_create_loc_conf,   /* create location configuration */
++    ngx_http_status_xml_merge_loc_conf     /* merge location configuration */
++};
++
++
++ngx_module_t  ngx_http_status_xml_module = {
++    NGX_MODULE_V1,
++    &ngx_http_status_xml_module_ctx,       /* module context */
++    ngx_http_status_commands,              /* module directives */
++    NGX_HTTP_MODULE,                       /* module type */
++    NULL,                                  /* init master */
++    NULL,                                  /* init module */
++    NULL,                                  /* init process */
++    NULL,                                  /* init thread */
++    NULL,                                  /* exit thread */
++    NULL,                                  /* exit process */
++    NULL,                                  /* exit master */
++    NGX_MODULE_V1_PADDING
++};
++
++static ngx_time_t   last_configure;
++static ngx_str_t    last_configure_human_time;
++
++
++static ngx_int_t
++ngx_http_status_calcualte_len(ngx_status_list_t *c,
++    ngx_http_status_xml_period_t *period, ngx_uint_t level)
++{
++    ngx_uint_t size = 0;
++
++    while (c) {
++        size += ngx_http_status_xml_len_space(level);
++        size += sizeof("< name=\"\">\n") - 1
++            + c->counter->tag_name.len + c->counter->tag_value.len;
++
++
++        size += ngx_http_status_xml_len_space(level + 1);
++        size += sizeof("<caption></caption>\n") - 1 + c->counter->caption.len;
++        size += ngx_http_status_xml_len_space(level + 1);
++        size += sizeof("<value></value>\n") - 1 + NGX_ATOMIC_T_LEN;
++        size += ngx_http_status_xml_len_space(level + 1);
++        size += sizeof("<avg></avg>\n") - 1 + NGX_ATOMIC_T_LEN;
++        if (c->counter->childs) {
++            if (c->counter->tag_for_childs.len) {
++                size += ngx_http_status_xml_len_space(level + 1);
++                size += sizeof("<>\n") - 1 + c->counter->tag_for_childs.len;
++
++                if (c->counter->label_for_childs.len) {
++                    size += ngx_http_status_xml_len_space(level + 2);
++                    size += sizeof("<caption></caption>\n") - 1
++                        + c->counter->label_for_childs.len;
++                }
++
++                size += ngx_http_status_calcualte_len(c->counter->childs,
++                                                      period, level + 2);
++
++                size += ngx_http_status_xml_len_space(level + 1);
++                size += sizeof("</>\n") - 1 + c->counter->tag_for_childs.len;
++            } else {
++                size += ngx_http_status_calcualte_len(c->counter->childs, period,
++                                                      level + 1);
++            }
++        }
++
++
++        size += ngx_http_status_xml_len_space(level);
++        size += sizeof("</>\n") - 1 + c->counter->tag_name.len;
++        c = c->next;
++    }
++
++    return size;
++}
++
++
++static u_char*
++ngx_http_status_write_counter(u_char *p, ngx_status_list_t *c,
++    ngx_http_status_xml_period_t *period, ngx_uint_t level)
++{
++    ngx_int_t  periodic_value;
++
++    while (c) {
++        ngx_http_status_xml_add_space(p, level);
++        p = ngx_sprintf(p, "<%V name=\"%V\">\n",
++                        &c->counter->tag_name, &c->counter->tag_value);
++
++        ngx_http_status_xml_add_space(p, level + 1);
++        p = ngx_sprintf(p, "<caption>%V</caption>\n", &c->counter->caption);
++
++        ngx_http_status_xml_add_space(p, level + 1);
++        if (period->num) {
++            p = ngx_sprintf(p, "<value>%uA</value>\n",
++                            ngx_status_get_periodic_value(c->counter,
++                                                          period->num));
++        } else {
++            p = ngx_sprintf(p, "<value>%uA</value>\n",
++                            ngx_status_get_accumulate_value(c->counter));
++        }
++
++        periodic_value = ngx_status_get_periodic_value(c->counter,
++                             period->num ? period->num : 1);
++
++         ngx_http_status_xml_add_space(p, level + 1);
++        if (period->num) {
++            p = ngx_sprintf(p, "<avg>%uA</avg>\n",
++                            periodic_value/period->num);
++        } else {
++            p = ngx_sprintf(p, "<avg>%uA</avg>\n",
++                            periodic_value);
++        }
++
++        if (c->counter->childs) {
++            if (c->counter->label_for_childs.len) {
++                ngx_http_status_xml_add_space(p, level + 1);
++                p = ngx_sprintf(p, "<%V>\n", &c->counter->tag_for_childs);
++
++                if (c->counter->label_for_childs.len) {
++                    ngx_http_status_xml_add_space(p, level + 2);
++                    p = ngx_sprintf(p, "<caption>%V</caption>\n",
++                                    &c->counter->label_for_childs.len);
++                }
++
++                p = ngx_http_status_write_counter(p, c->counter->childs,
++                                                  period, level + 2);
++
++                ngx_http_status_xml_add_space(p, level + 1);
++                p = ngx_sprintf(p, "</%V>\n", &c->counter->tag_for_childs);
++
++            } else {
++                p = ngx_http_status_write_counter(p, c->counter->childs,
++                                                  period, level + 1);
++            }
++        }
++
++        ngx_http_status_xml_add_space(p, level);
++        p = ngx_sprintf(p, "</%V>\n", &c->counter->tag_name);
++
++        c = c->next;
++    }
++
++    return p;
++}
++
++
++static ngx_int_t ngx_http_status_xml_handler(ngx_http_request_t *r)
++{
++    size_t                     size;
++    ngx_int_t                  rc;
++    ngx_buf_t                 *b;
++    ngx_uint_t                 i, j;
++    ngx_chain_t                out;
++
++    ngx_atomic_int_t           ap, hn, ac, rq, rd, wr;
++
++    ngx_status_list_t        **counters, *c;
++
++    ngx_http_core_srv_conf_t  *cscf;
++
++    ngx_uint_t                 uptime, uptime_days, uptime_hours, uptime_minutes, uptime_seconds;
++
++    ngx_http_status_xml_period_t   *period;
++    ngx_http_status_xml_loc_conf_t *conf;
++
++    if (r->method != NGX_HTTP_GET && r->method != NGX_HTTP_HEAD) {
++        return NGX_HTTP_NOT_ALLOWED;
++    }
++
++    rc = ngx_http_discard_request_body(r);
++
++    if (rc != NGX_OK) {
++        return rc;
++    }
++
++    conf = ngx_http_get_module_loc_conf(r, ngx_http_status_xml_module);
++
++    cscf = ngx_http_get_module_srv_conf(r, ngx_http_core_module);
++    if (cscf == NULL) {
++      return NGX_ERROR;
++    }
++
++    uptime = ngx_time() - last_configure.sec;
++    uptime_days = uptime / 86400;
++    uptime -= uptime_days * 86400;
++    uptime_hours = uptime / 3600;
++    uptime -= uptime_hours * 3600;
++    uptime_minutes = uptime / 60;
++    uptime -= uptime_minutes * 60;
++    uptime_seconds = uptime;
++    uptime = ngx_time() - last_configure.sec;
++
++
++    period = conf->periods->elts;
++    counters = ngx_status_get_counters((ngx_cycle_t *)ngx_cycle);
++
++    r->headers_out.content_type.len = sizeof("text/xml") - 1;
++    r->headers_out.content_type.data = (u_char *) "text/xml";
++
++    if (r->method == NGX_HTTP_HEAD) {
++        r->headers_out.status = NGX_HTTP_OK;
++
++        rc = ngx_http_send_header(r);
++
++        if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
++            return rc;
++        }
++    }
++
++    size = sizeof("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n") - 1
++           + sizeof("<ngx-status>") - 1
++           + sizeof("  <server>") - 1
++           + sizeof("    <ver>" NGINX_VER "</ver>") - 1
++           + sizeof("    <hostmame></hostname>") - 1 + cscf->server_name.len
++           + sizeof("    <reload>") - 1
++           + sizeof("      <timestamp></timestamp>") - 1 + NGX_INT_T_LEN
++           + sizeof("      <date></date>") - 1 + last_configure_human_time.len
++           + sizeof("    </reload>") - 1
++           + sizeof("    <uptime>") - 1
++           + sizeof("      <seconds></seconds>") - 1 + NGX_INT_T_LEN
++           + sizeof("      <time>d h m s</time>") - 1
++               + NGX_INT_T_LEN + NGX_INT_T_LEN + NGX_INT_T_LEN + NGX_INT_T_LEN
++           + sizeof("    </uptime>") - 1
++           + sizeof("  </server>") - 1
++           + sizeof("  <connections>") - 1
++           + sizeof("    <active></active>") - 1 + NGX_ATOMIC_T_LEN
++           + sizeof("    <accepts></accepts>") - 1 + NGX_ATOMIC_T_LEN
++           + sizeof("    <handled></handled>") - 1 + NGX_ATOMIC_T_LEN
++           + sizeof("    <requests></requests>") - 1 + NGX_ATOMIC_T_LEN
++           + sizeof("  </connections>") - 1
++           + sizeof("  <counters>") - 1;
++
++    if (conf->xsl_uri.len) {
++	size += sizeof("<?xml-stylesheet type=\"text/xsl\" href=\"\"?>") - 1 +
++	    conf->xsl_uri.len;
++    }
++
++    for (i = 0; i < conf->periods->nelts; i++) {
++        size += sizeof("    <period time=\"\">\n") - 1;
++        if (period[i].num) {
++            size += period[i].value.len;
++        } else {
++            size += sizeof("momentary") - 1;
++        }
++
++        for (j = 0; ngx_modules[j]; j++) {
++            c = counters[ngx_modules[j]->index];
++
++            if (c == NULL) {
++                continue;
++            }
++
++            size += ngx_http_status_calcualte_len(c, &period[i], 3);
++        }
++
++        size += sizeof("    </period>\n") - 1;
++    }
++
++    size += sizeof("  </counters>") - 1
++            + sizeof("</ngx-status>") - 1;
++
++    b = ngx_create_temp_buf(r->pool, size);
++    if (b == NULL) {
++        return NGX_HTTP_INTERNAL_SERVER_ERROR;
++    }
++
++    out.buf = b;
++    out.next = NULL;
++
++    ap = *ngx_stat_accepted;
++    hn = *ngx_stat_handled;
++    ac = *ngx_stat_active;
++    rq = *ngx_stat_requests;
++    rd = *ngx_stat_reading;
++    wr = *ngx_stat_writing;
++
++    b->last = ngx_sprintf(b->last, "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n");
++
++    if (conf->xsl_uri.len) {
++	b->last = ngx_sprintf(b->last,
++			      "<?xml-stylesheet type=\"text/xsl\" href=\"%V\"?>\n",
++			      &conf->xsl_uri);
++    }
++
++    b->last = ngx_sprintf(b->last, "<nginx-status>\n");
++    b->last = ngx_sprintf(b->last, "  <server>\n");
++    b->last = ngx_sprintf(b->last, "    <ver>" NGINX_VER "</ver>\n");
++    b->last = ngx_sprintf(b->last, "    <hostname>%V</hostname>\n",
++                          &cscf->server_name);
++    b->last = ngx_sprintf(b->last, "    <reload>\n");
++    b->last = ngx_sprintf(b->last, "      <timestamp>%d</timestamp>\n",
++                          last_configure.sec);
++    b->last = ngx_sprintf(b->last, "      <date>%V</date>\n",
++                          &last_configure_human_time);
++    b->last = ngx_sprintf(b->last, "    </reload>\n");
++    b->last = ngx_sprintf(b->last, "    <uptime>\n");
++    b->last = ngx_sprintf(b->last, "      <seconds>%d</seconds>\n",
++                          uptime);
++    b->last = ngx_sprintf(b->last, "      <time>%uAd %uAh %uAm %uAs</time>\n",
++                          uptime_days, uptime_hours, uptime_minutes,
++                          uptime_seconds);
++    b->last = ngx_sprintf(b->last, "    </uptime>\n");
++    b->last = ngx_sprintf(b->last, "  </server>\n");
++    b->last = ngx_sprintf(b->last, "  <connections>\n");
++    b->last = ngx_sprintf(b->last, "    <active>%uA</active>\n", ac);
++    b->last = ngx_sprintf(b->last, "    <accepts>%uA</accepts>\n", ap);
++    b->last = ngx_sprintf(b->last, "    <handled>%uA</handled>\n", hn);
++    b->last = ngx_sprintf(b->last, "    <requests>%uA</requests>\n", rq);
++    b->last = ngx_sprintf(b->last, "  </connections>\n");
++
++    b->last = ngx_sprintf(b->last, "  <counters>\n");
++
++    for (i = 0; i < conf->periods->nelts; i++) {
++
++        if (period[i].num) {
++            b->last = ngx_sprintf(b->last, "    <period time=\"%V\">\n",
++                                  &period[i].value);
++        } else {
++            b->last = ngx_sprintf(b->last, "    <period time=\"momentary\">\n");
++        }
++
++
++        for (j = 0; ngx_modules[j]; j++) {
++            c = counters[ngx_modules[j]->index];
++
++            if (c == NULL) {
++                continue;
++            }
++
++            b->last = ngx_http_status_write_counter(b->last, c, &period[i], 3);
++        }
++
++        b->last = ngx_sprintf(b->last, "    </period>\n");
++    }
++
++    b->last = ngx_sprintf(b->last, "  </counters>\n");
++
++    b->last = ngx_sprintf(b->last, "</nginx-status>");
++
++    r->headers_out.status = NGX_HTTP_OK;
++    r->headers_out.content_length_n = b->last - b->pos;
++
++    b->last_buf = 1;
++
++    rc = ngx_http_send_header(r);
++
++    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
++        return rc;
++    }
++
++    return ngx_http_output_filter(r, &out);
++}
++
++
++static void *
++ngx_http_status_xml_create_loc_conf(ngx_conf_t *cf)
++{
++    ngx_http_status_xml_loc_conf_t  *conf;
++
++    conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_status_xml_loc_conf_t));
++    if (conf == NULL) {
++        return NGX_CONF_ERROR;
++    }
++
++    return conf;
++}
++
++
++static char *
++ngx_http_status_xml_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
++{
++    ngx_http_status_xml_loc_conf_t  *prev = parent;
++    ngx_http_status_xml_loc_conf_t  *conf = child;
++
++    if (conf->periods == NULL) {
++        conf->periods = prev->periods;
++    }
++
++    ngx_conf_merge_str_value(conf->xsl_uri, prev->xsl_uri, "");
++
++    return NGX_CONF_OK;
++}
++
++
++static char  *months[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
++                           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
++
++
++static char *ngx_http_status_xml(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
++{
++    u_char       *p = conf;
++    ngx_tm_t      tm;
++    ngx_str_t    *value;
++    ngx_uint_t    i;
++    ngx_array_t **periods;
++
++    ngx_http_core_loc_conf_t  *clcf;
++
++    ngx_http_status_xml_period_t *period;
++
++    periods = (ngx_array_t **) (p + cmd->offset);
++
++    value = cf->args->elts;
++
++    clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
++    clcf->handler = ngx_http_status_xml_handler;
++
++    last_configure = *ngx_cached_time;
++    last_configure_human_time.len = sizeof("28/May/1987 17:30:00 +0400") - 1;
++    last_configure_human_time.data = ngx_palloc(cf->pool,
++                                                last_configure_human_time.len);
++    if (last_configure_human_time.data == NULL) {
++        return NGX_CONF_ERROR;
++    }
++
++    ngx_gmtime(ngx_cached_time->sec + ngx_cached_time->gmtoff * 60, &tm);
++
++    (void) ngx_sprintf(last_configure_human_time.data,
++                       "%02d/%s/%d %02d:%02d:%02d %c%02d%02d",
++                       tm.ngx_tm_mday, months[tm.ngx_tm_mon - 1],
++                       tm.ngx_tm_year, tm.ngx_tm_hour,
++                       tm.ngx_tm_min, tm.ngx_tm_sec,
++                       ngx_cached_time->gmtoff < 0 ? '-' : '+',
++                       ngx_abs(ngx_cached_time->gmtoff / 60),
++                       ngx_abs(ngx_cached_time->gmtoff % 60));
++
++    *periods = ngx_array_create(cf->pool, cf->args->nelts - 1,
++                                sizeof(ngx_http_status_xml_period_t));
++    if (*periods == NULL) {
++        return NGX_CONF_ERROR;
++    }
++
++    for (i = 1; i < cf->args->nelts; i++) {
++        period = ngx_array_push(*periods);
++        period->value = value[i];
++        period->num = ngx_atoi(period->value.data, period->value.len);
++
++        if (period->num == NGX_ERROR) {
++            return NGX_CONF_ERROR;
++        }
++    }
++
++    return NGX_CONF_OK;
++}
+Index: nginx-catap/nginx/src/http/ngx_http.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http.c
++++ nginx-catap/nginx/src/http/ngx_http.c
+@@ -77,6 +77,85 @@ ngx_str_t  ngx_http_html_default_types[]
+     ngx_null_string
+ };
+ 
++static ngx_str_t ngx_http_status[] = {
++
++    ngx_string("200 OK"),
++    ngx_string("201 Created"),
++    ngx_string("202 Accepted"),
++    ngx_null_string,  /* "203 Non-Authoritative Information" */
++    ngx_string("204 No Content"),
++    ngx_null_string,  /* "205 Reset Content" */
++    ngx_string("206 Partial Content"),
++
++    /* ngx_null_string, */  /* "207 Multi-Status" */
++
++#define NGX_HTTP_LAST_LEVEL_200  207
++#define NGX_HTTP_LEVEL_200       (NGX_HTTP_LAST_LEVEL_200 - 200)
++
++    /* ngx_null_string, */  /* "300 Multiple Choices" */
++
++    ngx_string("301 Moved Permanently"),
++    ngx_string("302 Moved Temporarily"),
++    ngx_string("303 See Other"),
++    ngx_string("304 Not Modified"),
++
++    /* ngx_null_string, */  /* "305 Use Proxy" */
++    /* ngx_null_string, */  /* "306 unused" */
++    /* ngx_null_string, */  /* "307 Temporary Redirect" */
++
++#define NGX_HTTP_LAST_LEVEL_300  305
++#define NGX_HTTP_LEVEL_300       (NGX_HTTP_LAST_LEVEL_300 - 301)
++
++    ngx_string("400 Bad Request"),
++    ngx_string("401 Unauthorized"),
++    ngx_string("402 Payment Required"),
++    ngx_string("403 Forbidden"),
++    ngx_string("404 Not Found"),
++    ngx_string("405 Not Allowed"),
++    ngx_string("406 Not Acceptable"),
++    ngx_null_string,  /* "407 Proxy Authentication Required" */
++    ngx_string("408 Request Time-out"),
++    ngx_string("409 Conflict"),
++    ngx_string("410 Gone"),
++    ngx_string("411 Length Required"),
++    ngx_string("412 Precondition Failed"),
++    ngx_string("413 Request Entity Too Large"),
++    ngx_null_string,  /* "414 Request-URI Too Large", but we never send it
++                       * because we treat such requests as the HTTP/0.9
++                       * requests and send only a body without a header
++                       */
++    ngx_string("415 Unsupported Media Type"),
++    ngx_string("416 Requested Range Not Satisfiable"),
++
++    /* ngx_null_string, */  /* "417 Expectation Failed" */
++    /* ngx_null_string, */  /* "418 unused" */
++    /* ngx_null_string, */  /* "419 unused" */
++    /* ngx_null_string, */  /* "420 unused" */
++    /* ngx_null_string, */  /* "421 unused" */
++    /* ngx_null_string, */  /* "422 Unprocessable Entity" */
++    /* ngx_null_string, */  /* "423 Locked" */
++    /* ngx_null_string, */  /* "424 Failed Dependency" */
++
++#define NGX_HTTP_LAST_LEVEL_400  417
++#define NGX_HTTP_LEVEL_400       (NGX_HTTP_LAST_LEVEL_400 - 400)
++
++    ngx_string("500 Internal Server Error"),
++    ngx_string("501 Method Not Implemented"),
++    ngx_string("502 Bad Gateway"),
++    ngx_string("503 Service Temporarily Unavailable"),
++    ngx_string("504 Gateway Time-out"),
++
++    ngx_null_string,        /* "505 HTTP Version Not Supported" */
++    ngx_null_string,        /* "506 Variant Also Negotiates" */
++    ngx_string("507 Insufficient Storage"),
++    /* ngx_null_string, */  /* "508 unused" */
++    /* ngx_null_string, */  /* "509 unused" */
++    /* ngx_null_string, */  /* "510 Not Extended" */
++
++#define NGX_HTTP_LAST_LEVEL_500  508
++
++};
++
+ 
+ static ngx_command_t  ngx_http_commands[] = {
+ 
+@@ -114,6 +193,64 @@ ngx_module_t  ngx_http_module = {
+ };
+ 
+ 
++ngx_inline ngx_int_t
++ngx_http_get_status_position(ngx_uint_t status)
++{
++    if (status >= NGX_HTTP_OK
++        && status < NGX_HTTP_LAST_LEVEL_200) {
++        /* 2XX */
++
++        status -= NGX_HTTP_OK;
++
++    } else if (status >= NGX_HTTP_MOVED_PERMANENTLY
++               && status < NGX_HTTP_LAST_LEVEL_300) {
++        /* 3XX */
++
++        status = status - NGX_HTTP_MOVED_PERMANENTLY + NGX_HTTP_LEVEL_200;
++
++    } else if (status >= NGX_HTTP_BAD_REQUEST
++               && status < NGX_HTTP_LAST_LEVEL_400) {
++        /* 4XX */
++        status = status - NGX_HTTP_BAD_REQUEST
++            + NGX_HTTP_LEVEL_200
++            + NGX_HTTP_LEVEL_300;
++
++    } else if (status >= NGX_HTTP_INTERNAL_SERVER_ERROR
++               && status < NGX_HTTP_LAST_LEVEL_500) {
++        /* 5XX */
++        status = status - NGX_HTTP_INTERNAL_SERVER_ERROR
++            + NGX_HTTP_LEVEL_200
++            + NGX_HTTP_LEVEL_300
++            + NGX_HTTP_LEVEL_400;
++
++    } else {
++        return NGX_ERROR;
++    }
++
++    return status;
++}
++
++
++ngx_inline ngx_str_t*
++ngx_http_get_status(ngx_uint_t status)
++{
++    status = (ngx_uint_t)ngx_http_get_status_position(status);
++
++    if ((ngx_int_t)status == NGX_ERROR) {
++        return NULL;
++    }
++
++    return &ngx_http_status[status];
++}
++
++
++ngx_inline ngx_int_t
++ngx_http_status_len()
++{
++    return sizeof(ngx_http_status);
++}
++
++
+ static char *
+ ngx_http_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+ {
+Index: nginx-catap/nginx/src/http/ngx_http.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http.h
++++ nginx-catap/nginx/src/http/ngx_http.h
+@@ -50,6 +50,10 @@ struct ngx_http_log_ctx_s {
+     ngx_http_request_t  *current_request;
+ };
+ 
++ngx_inline ngx_int_t ngx_http_get_status_position(ngx_uint_t status);
++ngx_inline ngx_int_t ngx_http_status_len();
++
++ngx_inline ngx_str_t* ngx_http_get_status(ngx_uint_t status);
+ 
+ typedef struct {
+     ngx_uint_t           code;
+@@ -151,7 +155,6 @@ extern ngx_module_t  ngx_http_module;
+ 
+ extern ngx_str_t  ngx_http_html_default_types[];
+ 
+-
+ extern ngx_http_output_header_filter_pt  ngx_http_top_header_filter;
+ extern ngx_http_output_body_filter_pt    ngx_http_top_body_filter;
+ 
+Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_core_module.c
++++ nginx-catap/nginx/src/http/ngx_http_core_module.c
+@@ -73,6 +73,10 @@ static char *ngx_http_core_resolver(ngx_
+ static char *ngx_http_gzip_disable(ngx_conf_t *cf, ngx_command_t *cmd,
+     void *conf);
+ #endif
++#if (NGX_STATUS)
++static char *ngx_http_status_capture(ngx_conf_t *cf,
++    ngx_command_t *cmd, void *conf);
++#endif
+ 
+ static char *ngx_http_core_lowat_check(ngx_conf_t *cf, void *post, void *data);
+ static char *ngx_http_core_pool_size(ngx_conf_t *cf, void *post, void *data);
+@@ -739,7 +743,18 @@ static ngx_command_t  ngx_http_core_comm
+ 
+ #endif
+ 
+-      ngx_null_command
++#if (NGX_STATUS)
++
++    { ngx_string("status_capture"),
++      NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
++      ngx_http_status_capture,
++      NGX_HTTP_LOC_CONF_OFFSET,
++      0,
++      NULL },
++
++#endif
++
++     ngx_null_command
+ };
+ 
+ 
+@@ -938,6 +953,12 @@ ngx_http_core_find_config_phase(ngx_http
+ 
+     clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
+ 
++#if (NGX_STATUS)
++    if (clcf->request_counter) {
++        ngx_status_fetch_add(clcf->request_counter);
++    }
++#endif
++
+     if (!r->internal && clcf->internal) {
+         ngx_http_finalize_request(r, NGX_HTTP_NOT_FOUND);
+         return NGX_OK;
+@@ -2519,9 +2540,15 @@ ngx_http_core_server(ngx_conf_t *cf, ngx
+ 
+     *cscfp = cscf;
+ 
++#if (NGX_STATUS)
++    cscf->request_counter =
++        ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++    if (cscf->request_counter == NULL) {
++        return NGX_CONF_ERROR;
++    }
++#endif
+ 
+     /* parse inside server{} */
+-
+     pcf = *cf;
+     cf->ctx = ctx;
+     cf->cmd_type = NGX_HTTP_SRV_CONF;
+@@ -2561,6 +2588,104 @@ ngx_http_core_server(ngx_conf_t *cf, ngx
+         }
+     }
+ 
++#if (NGX_STATUS)
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++    cscf->request_counter->label_for_childs.len = sizeof("locations info") - 1;
++    cscf->request_counter->label_for_childs.data = (u_char *)"locations info";
++    cscf->request_counter->caption.len = sizeof("Request for host ") - 1;
++#endif
++
++#if (NGX_STATUS_XML)
++    cscf->request_counter->tag_for_childs.len = sizeof("locations") - 1;
++    cscf->request_counter->tag_for_childs.data = (u_char *)"locations";
++    cscf->request_counter->tag_name.len = sizeof("host") - 1;
++    cscf->request_counter->tag_name.data = (u_char *)"host";
++#endif
++
++    if (cscf->server_name.len) {
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++        cscf->request_counter->caption.len += cscf->server_name.len;
++#endif
++
++#if (NGX_STATUS_XML)
++        cscf->request_counter->tag_value = cscf->server_name;
++#endif
++
++    } else {
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++        cscf->request_counter->caption.len += sizeof("default") - 1;
++#endif
++
++#if (NGX_STATUS_XML)
++        cscf->request_counter->tag_value.len = sizeof("default") - 1;
++#endif
++
++    }
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++    cscf->request_counter->caption.len += sizeof(" ()") - 1
++        + cscf->listen_string.len;
++#endif
++
++#if (NGX_STATUS_XML)
++    cscf->request_counter->tag_value.len += sizeof(" ()") - 1
++        + cscf->listen_string.len;
++#endif
++
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++    cscf->request_counter->caption.data =
++        ngx_palloc(cf->pool, cscf->request_counter->caption.len);
++    if (cscf->request_counter->caption.data == NULL) {
++        return NGX_CONF_ERROR;
++    }
++#endif
++
++#if (NGX_STATUS_XML)
++    cscf->request_counter->tag_value.data =
++        ngx_palloc(cf->pool, cscf->request_counter->tag_value.len);
++    if (cscf->request_counter->tag_value.data == NULL) {
++        return NGX_CONF_ERROR;
++    }
++#endif
++
++    if (cscf->server_name.len) {
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++        ngx_sprintf(cscf->request_counter->caption.data,
++                    "Request for host %V (%V)",
++                    &cscf->server_name, &cscf->listen_string);
++#endif
++
++#if (NGX_STATUS_XML)
++        ngx_sprintf(cscf->request_counter->tag_value.data,
++                    "%V (%V)",
++                    &cscf->server_name, &cscf->listen_string);
++#endif
++
++    } else {
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++        ngx_sprintf(cscf->request_counter->caption.data,
++                    "Request for host default (%V)", &cscf->listen_string);
++#endif
++
++#if (NGX_STATUS_XML)
++        ngx_sprintf(cscf->request_counter->tag_value.data,
++                    "default (%V)", &cscf->listen_string);
++#endif
++
++    }
++
++    if (ngx_status_add_counter(cf->cycle, &ngx_http_module,
++                               cscf->request_counter) != NGX_OK) {
++        return NGX_CONF_ERROR;
++    }
++
++#endif
++
+     return rv;
+ }
+ 
+@@ -2577,6 +2702,10 @@ ngx_http_core_location(ngx_conf_t *cf, n
+     ngx_http_module_t         *module;
+     ngx_http_conf_ctx_t       *ctx, *pctx;
+     ngx_http_core_loc_conf_t  *clcf, *pclcf;
++#if (NGX_STATUS)
++    ngx_http_core_srv_conf_t  *cscf;
++    u_char                    *p_caption;
++#endif
+ 
+     ctx = ngx_pcalloc(cf->pool, sizeof(ngx_http_conf_ctx_t));
+     if (ctx == NULL) {
+@@ -2743,6 +2872,92 @@ ngx_http_core_location(ngx_conf_t *cf, n
+         }
+     }
+ 
++#if (NGX_STATUS)
++    cscf = ngx_http_conf_get_module_srv_conf(cf, ngx_http_core_module);
++
++    if (cscf->request_counter) {
++
++        clcf->request_counter =
++            ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++        if (clcf->request_counter == NULL) {
++            return NGX_CONF_ERROR;
++        }
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++        clcf->request_counter->caption.len = sizeof("Location ") - 1 + value[1].len;
++        clcf->request_counter->label_for_childs.len = sizeof("codes list") - 1;
++        clcf->request_counter->label_for_childs.data = (u_char *)"codes list";
++#endif
++
++#if (NGX_STATUS_XML)
++        clcf->request_counter->tag_name.len = sizeof("location") - 1;
++        clcf->request_counter->tag_name.data = (u_char *)"location";
++        clcf->request_counter->tag_for_childs.len = sizeof("codes") - 1;
++        clcf->request_counter->tag_for_childs.data = (u_char *)"codes";
++        clcf->request_counter->tag_value.len = value[1].len;
++#endif
++
++
++        if (cf->args->nelts == 3) {
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++            clcf->request_counter->caption.len += sizeof(" ") - 1 + value[2].len;
++#endif
++
++#if (NGX_STATUS_XML)
++            clcf->request_counter->tag_value.len +=
++                sizeof(" ") - 1 + value[2].len;
++#endif
++
++        }
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++        clcf->request_counter->caption.data =
++            ngx_palloc(cf->pool, clcf->request_counter->caption.len);
++        if (clcf->request_counter->caption.data == NULL) {
++            return NGX_CONF_ERROR;
++        }
++
++        p_caption = clcf->request_counter->caption.data;
++
++        p_caption = ngx_sprintf(p_caption, "Location ");
++#endif
++
++        if (cf->args->nelts == 3) {
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++            p_caption = ngx_sprintf(p_caption, "%V %V", &value[1], &value[2]);
++#endif
++
++#if (NGX_STATUS_XML)
++            clcf->request_counter->tag_value.data =
++                ngx_palloc(cf->pool, clcf->request_counter->tag_value.len);
++            if (clcf->request_counter->tag_value.data == NULL) {
++                return NGX_CONF_ERROR;
++            }
++            ngx_sprintf(clcf->request_counter->tag_value.data,
++                        "%V %V", &value[1], &value[2]);
++#endif
++
++        } else {
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++            p_caption = ngx_sprintf(p_caption, "%V", &value[1]);
++#endif
++
++#if (NGX_STATUS_XML)
++            clcf->request_counter->tag_value = value[1];
++#endif
++        }
++
++        if (ngx_status_add_child(cf->cycle, cscf->request_counter,
++                                 clcf->request_counter) != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++    }
++
++#endif
++
+     if (ngx_http_add_location(cf, &pclcf->locations, clcf) != NGX_OK) {
+         return NGX_CONF_ERROR;
+     }
+@@ -3078,6 +3293,7 @@ ngx_http_core_create_loc_conf(ngx_conf_t
+      *     clcf->auto_redirect = 0;
+      *     clcf->alias = 0;
+      *     clcf->gzip_proxied = 0;
++     *     lcf->request_counter = NULL;
+      */
+ 
+     clcf->client_max_body_size = NGX_CONF_UNSET;
+@@ -3413,6 +3629,14 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
+ #endif
+ #endif
+ 
++#if (NGX_STATUS)
++    if (prev->request_counter) {
++
++        conf->request_counter = prev->request_counter;
++
++    }
++#endif
++
+     return NGX_CONF_OK;
+ }
+ 
+@@ -3437,6 +3661,10 @@ ngx_http_core_listen(ngx_conf_t *cf, ngx
+     u.listen = 1;
+     u.default_port = 80;
+ 
++#if (NGX_STATUS)
++    cscf->listen_string = value[1];
++#endif
++
+     if (ngx_parse_url(cf->pool, &u) != NGX_OK) {
+         if (u.err) {
+             ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+@@ -4521,6 +4749,73 @@ ngx_http_core_lowat_check(ngx_conf_t *cf
+ }
+ 
+ 
++#if (NGX_STATUS)
++
++static char *
++ngx_http_status_capture(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
++{
++    ngx_int_t                  n, p;
++    ngx_str_t                 *value;
++    ngx_uint_t                 i;
++    ngx_str_t                 *status_line;
++    ngx_status_counter_t      *counter;
++    ngx_http_core_loc_conf_t  *clcf;
++
++    clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
++
++    value = cf->args->elts;
++
++    clcf->status_counters = ngx_pcalloc(cf->pool,
++        sizeof(ngx_status_counter_t *) * ngx_http_status_len());
++
++    if (clcf->status_counters == NULL) {
++        return NGX_CONF_ERROR;
++    }
++
++    for (i = 1; i < cf->args->nelts; i++) {
++
++        n = ngx_atoi(value[i].data, value[i].len);
++        if (n == NGX_ERROR) {
++            return NGX_CONF_ERROR;
++        }
++
++        status_line = ngx_http_get_status(n);
++
++        if (status_line == NULL) {
++            continue;
++        }
++
++        p = ngx_http_get_status_position(n);
++
++        counter = ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++        if (counter == NULL) {
++            return NGX_CONF_ERROR;
++        }
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++        counter->caption = *status_line;
++#endif
++
++#if (NGX_STATUS_XML)
++        counter->tag_name.len = sizeof("code") - 1;
++        counter->tag_name.data = (u_char *)"code";
++        counter->tag_value = value[i];
++#endif
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 counter) != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        clcf->status_counters[p] = counter;
++    }
++
++    return NGX_CONF_OK;
++}
++
++#endif
++
++
+ static char *
+ ngx_http_core_pool_size(ngx_conf_t *cf, void *post, void *data)
+ {
+Index: nginx-catap/nginx/src/http/ngx_http_core_module.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_core_module.h
++++ nginx-catap/nginx/src/http/ngx_http_core_module.h
+@@ -170,6 +170,11 @@ typedef struct {
+     /* server ctx */
+     ngx_http_conf_ctx_t        *ctx;
+ 
++
++#if (NGX_STATUS)
++    ngx_str_t                   listen_string;
++#endif
++
+     ngx_str_t                   server_name;
+ 
+     size_t                      connection_pool_size;
+@@ -190,6 +195,10 @@ typedef struct {
+ #endif
+ 
+     ngx_http_core_loc_conf_t  **named_locations;
++
++#if (NGX_STATUS)
++    ngx_status_counter_t       *request_counter;
++#endif
+ } ngx_http_core_srv_conf_t;
+ 
+ 
+@@ -408,6 +417,11 @@ struct ngx_http_core_loc_conf_s {
+ 
+     ngx_queue_t  *locations;
+ 
++#if (NGX_STATUS)
++    ngx_status_counter_t  *request_counter;
++    ngx_status_counter_t **status_counters;
++#endif
++
+ #if 0
+     ngx_http_core_loc_conf_t  *prev_location;
+ #endif
+Index: nginx-catap/nginx/src/http/ngx_http_header_filter_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_header_filter_module.c
++++ nginx-catap/nginx/src/http/ngx_http_header_filter_module.c
+@@ -49,86 +49,6 @@ static char ngx_http_server_string[] = "
+ static char ngx_http_server_full_string[] = "Server: " NGINX_VER CRLF;
+ 
+ 
+-static ngx_str_t ngx_http_status_lines[] = {
+-
+-    ngx_string("200 OK"),
+-    ngx_string("201 Created"),
+-    ngx_string("202 Accepted"),
+-    ngx_null_string,  /* "203 Non-Authoritative Information" */
+-    ngx_string("204 No Content"),
+-    ngx_null_string,  /* "205 Reset Content" */
+-    ngx_string("206 Partial Content"),
+-
+-    /* ngx_null_string, */  /* "207 Multi-Status" */
+-
+-#define NGX_HTTP_LAST_LEVEL_200  207
+-#define NGX_HTTP_LEVEL_200       (NGX_HTTP_LAST_LEVEL_200 - 200)
+-
+-    /* ngx_null_string, */  /* "300 Multiple Choices" */
+-
+-    ngx_string("301 Moved Permanently"),
+-    ngx_string("302 Moved Temporarily"),
+-    ngx_string("303 See Other"),
+-    ngx_string("304 Not Modified"),
+-
+-    /* ngx_null_string, */  /* "305 Use Proxy" */
+-    /* ngx_null_string, */  /* "306 unused" */
+-    /* ngx_null_string, */  /* "307 Temporary Redirect" */
+-
+-#define NGX_HTTP_LAST_LEVEL_300  305
+-#define NGX_HTTP_LEVEL_300       (NGX_HTTP_LAST_LEVEL_300 - 301)
+-
+-    ngx_string("400 Bad Request"),
+-    ngx_string("401 Unauthorized"),
+-    ngx_string("402 Payment Required"),
+-    ngx_string("403 Forbidden"),
+-    ngx_string("404 Not Found"),
+-    ngx_string("405 Not Allowed"),
+-    ngx_string("406 Not Acceptable"),
+-    ngx_null_string,  /* "407 Proxy Authentication Required" */
+-    ngx_string("408 Request Time-out"),
+-    ngx_string("409 Conflict"),
+-    ngx_string("410 Gone"),
+-    ngx_string("411 Length Required"),
+-    ngx_string("412 Precondition Failed"),
+-    ngx_string("413 Request Entity Too Large"),
+-    ngx_null_string,  /* "414 Request-URI Too Large", but we never send it
+-                       * because we treat such requests as the HTTP/0.9
+-                       * requests and send only a body without a header
+-                       */
+-    ngx_string("415 Unsupported Media Type"),
+-    ngx_string("416 Requested Range Not Satisfiable"),
+-
+-    /* ngx_null_string, */  /* "417 Expectation Failed" */
+-    /* ngx_null_string, */  /* "418 unused" */
+-    /* ngx_null_string, */  /* "419 unused" */
+-    /* ngx_null_string, */  /* "420 unused" */
+-    /* ngx_null_string, */  /* "421 unused" */
+-    /* ngx_null_string, */  /* "422 Unprocessable Entity" */
+-    /* ngx_null_string, */  /* "423 Locked" */
+-    /* ngx_null_string, */  /* "424 Failed Dependency" */
+-
+-#define NGX_HTTP_LAST_LEVEL_400  417
+-#define NGX_HTTP_LEVEL_400       (NGX_HTTP_LAST_LEVEL_400 - 400)
+-
+-    ngx_string("500 Internal Server Error"),
+-    ngx_string("501 Method Not Implemented"),
+-    ngx_string("502 Bad Gateway"),
+-    ngx_string("503 Service Temporarily Unavailable"),
+-    ngx_string("504 Gateway Time-out"),
+-
+-    ngx_null_string,        /* "505 HTTP Version Not Supported" */
+-    ngx_null_string,        /* "506 Variant Also Negotiates" */
+-    ngx_string("507 Insufficient Storage"),
+-    /* ngx_null_string, */  /* "508 unused" */
+-    /* ngx_null_string, */  /* "509 unused" */
+-    /* ngx_null_string, */  /* "510 Not Extended" */
+-
+-#define NGX_HTTP_LAST_LEVEL_500  508
+-
+-};
+-
+-
+ ngx_http_header_out_t  ngx_http_headers_out[] = {
+     { ngx_string("Server"), offsetof(ngx_http_headers_out_t, server) },
+     { ngx_string("Date"), offsetof(ngx_http_headers_out_t, date) },
+@@ -157,7 +77,7 @@ ngx_http_header_filter(ngx_http_request_
+     size_t                     len;
+     ngx_str_t                  host, *status_line;
+     ngx_buf_t                 *b;
+-    ngx_uint_t                 status, i, port;
++    ngx_uint_t                 i, port;
+     ngx_chain_t                out;
+     ngx_list_part_t           *part;
+     ngx_table_elt_t           *header;
+@@ -169,6 +89,11 @@ ngx_http_header_filter(ngx_http_request_
+     struct sockaddr_in6       *sin6;
+ #endif
+     u_char                     addr[NGX_SOCKADDR_STRLEN];
++#if (NGX_STATUS)
++    ngx_int_t                  status_position;
++    ngx_status_counter_t      *counter;
++#endif
++
+ 
+     if (r->header_sent) {
+         return NGX_OK;
+@@ -218,23 +143,17 @@ ngx_http_header_filter(ngx_http_request_
+ 
+     /* status line */
+ 
++    status_line = ngx_http_get_status(r->headers_out.status);
++
+     if (r->headers_out.status_line.len) {
+-        len += r->headers_out.status_line.len;
+         status_line = &r->headers_out.status_line;
+-#if (NGX_SUPPRESS_WARN)
+-        status = 0;
+-#endif
+ 
+     } else {
+ 
+-        status = r->headers_out.status;
+-
+-        if (status >= NGX_HTTP_OK
+-            && status < NGX_HTTP_LAST_LEVEL_200)
+-        {
+-            /* 2XX */
++        if (status_line) {
+ 
+-            if (status == NGX_HTTP_NO_CONTENT) {
++	    switch (r->headers_out.status) {
++	    case NGX_HTTP_NO_CONTENT:
+                 r->header_only = 1;
+                 ngx_str_null(&r->headers_out.content_type);
+                 r->headers_out.last_modified_time = -1;
+@@ -245,56 +164,34 @@ ngx_http_header_filter(ngx_http_request_
+                 r->headers_out.etag_time = 1;
+                 r->headers_out.etag_uniq = 1;
+                 r->headers_out.etag = NULL;
+-            }
+-
+-            status -= NGX_HTTP_OK;
+-            status_line = &ngx_http_status_lines[status];
+-            len += ngx_http_status_lines[status].len;
+-
+-        } else if (status >= NGX_HTTP_MOVED_PERMANENTLY
+-                   && status < NGX_HTTP_LAST_LEVEL_300)
+-        {
+-            /* 3XX */
+-
+-            if (status == NGX_HTTP_NOT_MODIFIED) {
++		break;
++	    case NGX_HTTP_NOT_MODIFIED:
+                 r->header_only = 1;
+-            }
+-
+-            status = status - NGX_HTTP_MOVED_PERMANENTLY + NGX_HTTP_LEVEL_200;
+-            status_line = &ngx_http_status_lines[status];
+-            len += ngx_http_status_lines[status].len;
+-
+-        } else if (status >= NGX_HTTP_BAD_REQUEST
+-                   && status < NGX_HTTP_LAST_LEVEL_400)
+-        {
+-            /* 4XX */
+-            status = status - NGX_HTTP_BAD_REQUEST
+-                            + NGX_HTTP_LEVEL_200
+-                            + NGX_HTTP_LEVEL_300;
+-
+-            status_line = &ngx_http_status_lines[status];
+-            len += ngx_http_status_lines[status].len;
+-
+-        } else if (status >= NGX_HTTP_INTERNAL_SERVER_ERROR
+-                   && status < NGX_HTTP_LAST_LEVEL_500)
+-        {
+-            /* 5XX */
+-            status = status - NGX_HTTP_INTERNAL_SERVER_ERROR
+-                            + NGX_HTTP_LEVEL_200
+-                            + NGX_HTTP_LEVEL_300
+-                            + NGX_HTTP_LEVEL_400;
+-
+-            status_line = &ngx_http_status_lines[status];
+-            len += ngx_http_status_lines[status].len;
+-
++		break;
++	    }
+         } else {
+             len += NGX_INT_T_LEN;
+             status_line = NULL;
+         }
+     }
+ 
++    if (status_line) {
++        len += status_line->len;
++    }
++
+     clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
+ 
++#if (NGX_STATUS)
++    if (status_line && clcf->status_counters) {
++	status_position = ngx_http_get_status_position(r->headers_out.status);
++	counter = clcf->status_counters[status_position];
++
++	if (counter) {
++	    ngx_status_fetch_add(counter);
++	}
++    }
++#endif
++
+     if (r->headers_out.server == NULL) {
+         len += clcf->server_tokens ? sizeof(ngx_http_server_full_string) - 1:
+                                      sizeof(ngx_http_server_string) - 1;
+@@ -475,7 +372,7 @@ ngx_http_header_filter(ngx_http_request_
+         b->last = ngx_copy(b->last, status_line->data, status_line->len);
+ 
+     } else {
+-        b->last = ngx_sprintf(b->last, "%ui", status);
++        b->last = ngx_sprintf(b->last, "%ui", r->headers_out.status);
+     }
+     *b->last++ = CR; *b->last++ = LF;
+ 
+Index: nginx-catap/nginx/src/http/ngx_http_request.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_request.c
++++ nginx-catap/nginx/src/http/ngx_http_request.c
+@@ -209,7 +209,7 @@ ngx_http_init_connection(ngx_connection_
+     rev->handler = ngx_http_init_request;
+     c->write->handler = ngx_http_empty_handler;
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+     (void) ngx_atomic_fetch_add(ngx_stat_reading, 1);
+ #endif
+ 
+@@ -228,7 +228,7 @@ ngx_http_init_connection(ngx_connection_
+     ngx_add_timer(rev, c->listening->post_accept_timeout);
+ 
+     if (ngx_handle_read_event(rev, 0) != NGX_OK) {
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+         (void) ngx_atomic_fetch_add(ngx_stat_reading, -1);
+ #endif
+         ngx_http_close_connection(c);
+@@ -258,7 +258,7 @@ ngx_http_init_request(ngx_event_t *rev)
+     ngx_http_in6_addr_t        *addr6;
+ #endif
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+     (void) ngx_atomic_fetch_add(ngx_stat_reading, -1);
+ #endif
+ 
+@@ -516,7 +516,7 @@ ngx_http_init_request(ngx_event_t *rev)
+     ctx->current_request = r;
+     r->log_handler = ngx_http_log_error_handler;
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+     (void) ngx_atomic_fetch_add(ngx_stat_reading, 1);
+     r->stat_reading = 1;
+     (void) ngx_atomic_fetch_add(ngx_stat_requests, 1);
+@@ -1638,7 +1638,7 @@ ngx_http_process_request(ngx_http_reques
+         ngx_del_timer(c->read);
+     }
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+     (void) ngx_atomic_fetch_add(ngx_stat_reading, -1);
+     r->stat_reading = 0;
+     (void) ngx_atomic_fetch_add(ngx_stat_writing, 1);
+@@ -2467,7 +2467,7 @@ ngx_http_set_keepalive(ngx_http_request_
+ 
+         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0, "pipelined request");
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+         (void) ngx_atomic_fetch_add(ngx_stat_reading, 1);
+ #endif
+ 
+@@ -2697,7 +2697,7 @@ ngx_http_keepalive_handler(ngx_event_t *
+ 
+     b->last += n;
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+     (void) ngx_atomic_fetch_add(ngx_stat_reading, 1);
+ #endif
+ 
+@@ -2947,7 +2947,7 @@ ngx_http_free_request(ngx_http_request_t
+         }
+     }
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+ 
+     if (r->stat_reading) {
+         (void) ngx_atomic_fetch_add(ngx_stat_reading, -1);
+@@ -3034,7 +3034,7 @@ ngx_http_close_connection(ngx_connection
+ 
+ #endif
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+     (void) ngx_atomic_fetch_add(ngx_stat_active, -1);
+ #endif
+ 
+Index: nginx-catap/nginx/src/http/ngx_http_request.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_request.h
++++ nginx-catap/nginx/src/http/ngx_http_request.h
+@@ -518,7 +518,7 @@ struct ngx_http_request_s {
+     unsigned                          filter_need_temporary:1;
+     unsigned                          allow_ranges:1;
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+     unsigned                          stat_reading:1;
+     unsigned                          stat_writing:1;
+ #endif
+Index: nginx-catap/nginx/src/mail/ngx_mail_handler.c
+===================================================================
+--- nginx-catap.orig/nginx/src/mail/ngx_mail_handler.c
++++ nginx-catap/nginx/src/mail/ngx_mail_handler.c
+@@ -709,7 +709,7 @@ ngx_mail_close_connection(ngx_connection
+ 
+ #endif
+ 
+-#if (NGX_STAT_STUB)
++#if (NGX_STAT_STUB) || (NGX_STATUS)
+     (void) ngx_atomic_fetch_add(ngx_stat_active, -1);
+ #endif
+ 
