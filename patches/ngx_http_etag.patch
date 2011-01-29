@@ -214,7 +214,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_core_module.c
 +++ nginx-catap/nginx/src/http/ngx_http_core_module.c
-@@ -2222,6 +2222,7 @@ ngx_http_subrequest(ngx_http_request_t *
+@@ -2212,6 +2212,7 @@ ngx_http_subrequest(ngx_http_request_t *
      ngx_http_clear_content_length(sr);
      ngx_http_clear_accept_ranges(sr);
      ngx_http_clear_last_modified(sr);
@@ -341,7 +341,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.h
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_request.h
 +++ nginx-catap/nginx/src/http/ngx_http_request.h
-@@ -168,6 +168,7 @@ typedef struct {
+@@ -170,6 +170,7 @@ typedef struct {
      ngx_table_elt_t                  *connection;
      ngx_table_elt_t                  *if_modified_since;
      ngx_table_elt_t                  *if_unmodified_since;
@@ -349,7 +349,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.h
      ngx_table_elt_t                  *user_agent;
      ngx_table_elt_t                  *referer;
      ngx_table_elt_t                  *content_length;
-@@ -261,6 +262,10 @@ typedef struct {
+@@ -263,6 +264,10 @@ typedef struct {
      off_t                             content_length_n;
      time_t                            date_time;
      time_t                            last_modified_time;
@@ -364,7 +364,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_special_response.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_special_response.c
 +++ nginx-catap/nginx/src/http/ngx_http_special_response.c
-@@ -627,6 +627,7 @@ ngx_http_send_special_response(ngx_http_
+@@ -639,6 +639,7 @@ ngx_http_send_special_response(ngx_http_
  
      ngx_http_clear_accept_ranges(r);
      ngx_http_clear_last_modified(r);
@@ -372,7 +372,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_special_response.c
  
      rc = ngx_http_send_header(r);
  
-@@ -725,6 +726,7 @@ ngx_http_send_refresh(ngx_http_request_t
+@@ -737,6 +738,7 @@ ngx_http_send_refresh(ngx_http_request_t
  
      ngx_http_clear_accept_ranges(r);
      ngx_http_clear_last_modified(r);
