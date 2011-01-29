@@ -1846,7 +1846,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
  
      ctx = ngx_pcalloc(cf->pool, sizeof(ngx_http_conf_ctx_t));
      if (ctx == NULL) {
-@@ -2743,6 +2872,92 @@ ngx_http_core_location(ngx_conf_t *cf, n
+@@ -2743,6 +2872,94 @@ ngx_http_core_location(ngx_conf_t *cf, n
          }
      }
  
@@ -1863,15 +1863,17 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 +
 +#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
 +        clcf->request_counter->caption.len = sizeof("Location ") - 1 + value[1].len;
-+        clcf->request_counter->label_for_childs.len = sizeof("codes list") - 1;
-+        clcf->request_counter->label_for_childs.data = (u_char *)"codes list";
++        clcf->request_counter->label_for_childs.len =
++            sizeof("extend location info") - 1;
++        clcf->request_counter->label_for_childs.data =
++            (u_char *)"extend location info";
 +#endif
 +
 +#if (NGX_STATUS_XML)
 +        clcf->request_counter->tag_name.len = sizeof("location") - 1;
 +        clcf->request_counter->tag_name.data = (u_char *)"location";
-+        clcf->request_counter->tag_for_childs.len = sizeof("codes") - 1;
-+        clcf->request_counter->tag_for_childs.data = (u_char *)"codes";
++        clcf->request_counter->tag_for_childs.len = sizeof("extend_info") - 1;
++        clcf->request_counter->tag_for_childs.data = (u_char *)"extend_info";
 +        clcf->request_counter->tag_value.len = value[1].len;
 +#endif
 +
@@ -1939,7 +1941,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      if (ngx_http_add_location(cf, &pclcf->locations, clcf) != NGX_OK) {
          return NGX_CONF_ERROR;
      }
-@@ -3078,6 +3293,7 @@ ngx_http_core_create_loc_conf(ngx_conf_t
+@@ -3078,6 +3295,7 @@ ngx_http_core_create_loc_conf(ngx_conf_t
       *     clcf->auto_redirect = 0;
       *     clcf->alias = 0;
       *     clcf->gzip_proxied = 0;
@@ -1947,7 +1949,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
       */
  
      clcf->client_max_body_size = NGX_CONF_UNSET;
-@@ -3413,6 +3629,14 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
+@@ -3413,6 +3631,14 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
  #endif
  #endif
  
@@ -1962,7 +1964,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      return NGX_CONF_OK;
  }
  
-@@ -3437,6 +3661,10 @@ ngx_http_core_listen(ngx_conf_t *cf, ngx
+@@ -3437,6 +3663,10 @@ ngx_http_core_listen(ngx_conf_t *cf, ngx
      u.listen = 1;
      u.default_port = 80;
  
@@ -1973,7 +1975,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      if (ngx_parse_url(cf->pool, &u) != NGX_OK) {
          if (u.err) {
              ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-@@ -4521,6 +4749,73 @@ ngx_http_core_lowat_check(ngx_conf_t *cf
+@@ -4521,6 +4751,73 @@ ngx_http_core_lowat_check(ngx_conf_t *cf
  }
  
  
@@ -2422,4 +2424,730 @@ Index: nginx-catap/nginx/src/mail/ngx_mail_handler.c
 +#if (NGX_STAT_STUB) || (NGX_STATUS)
      (void) ngx_atomic_fetch_add(ngx_stat_active, -1);
  #endif
+ 
+Index: nginx-catap/nginx/src/http/ngx_http_upstream.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream.h
++++ nginx-catap/nginx/src/http/ngx_http_upstream.h
+@@ -165,6 +165,12 @@ typedef struct {
+     ngx_array_t                     *cache_valid;
+     ngx_array_t                     *cache_bypass;
+     ngx_array_t                     *no_cache;
++
++#if (NGX_STATUS)
++    /* NGX_HTTP_CACHE_MISS..NGX_HTTP_CACHE_SCARCE */
++    ngx_status_counter_t            *cache_status_counter[8];
++#endif
++
+ #endif
+ 
+     ngx_array_t                     *store_lengths;
+Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_proxy_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
+@@ -2650,6 +2650,168 @@ ngx_http_proxy_cache(ngx_conf_t *cf, ngx
+         return NGX_CONF_ERROR;
+     }
+ 
++#if (NGX_STATUS)
++    ngx_http_core_loc_conf_t  *clcf =
++	ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
++
++    if (clcf->request_counter) {
++
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS]->caption.len =
++	    sizeof("Proxy cache missing") - 1;
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS]->caption.data =
++	    (u_char *)"Proxy cache missing";
++
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS]->caption.len =
++	    sizeof("Proxy cache by pass") - 1;
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS]->caption.data =
++	    (u_char *)"Proxy cache by pass";
++
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED]->caption.len =
++	    sizeof("Proxy cache expired") - 1;
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED]->caption.data =
++	    (u_char *)"Proxy cache expired";
++
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE]->caption.len =
++	    sizeof("Proxy cache stale") - 1;
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE]->caption.data =
++	    (u_char *)"Proxy cache stale";
++
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING]->caption.len =
++	    sizeof("Proxy cache updating") - 1;
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING]->caption.data =
++	    (u_char *)"Proxy cache updating";
++
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT]->caption.len =
++	    sizeof("Proxy cache hit") - 1;
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT]->caption.data =
++	    (u_char *)"Proxy cache hit";
++
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE]->caption.len =
++	    sizeof("Proxy cache scarce") - 1;
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE]->caption.data =
++	    (u_char *)"Proxy cache scarce";
++
++#endif
++
++#if (NGX_STATUS_XML)
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS]->tag_name.len =
++	    sizeof("proxy_cache_miss") - 1;
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS]->tag_name.data =
++	    (u_char *)"proxy_cache_miss";
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS]->tag_name.len =
++	    sizeof("proxy_cache_bypass") - 1;
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS]->tag_name.data =
++	    (u_char *)"proxy_cache_bypass";
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED]->tag_name.len =
++	    sizeof("proxy_cache_expired") - 1;
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED]->tag_name.data =
++	    (u_char *)"proxy_cache_expired";
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE]->tag_name.len =
++	    sizeof("proxy_cache_stale") - 1;
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE]->tag_name.data =
++	    (u_char *)"proxy_cache_stale";
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING]->tag_name.len =
++	    sizeof("proxy_cache_updating") - 1;
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING]->tag_name.data =
++	    (u_char *)"proxy_cache_updating";
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT]->tag_name.len =
++	    sizeof("proxy_cache_hit") - 1;
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT]->tag_name.data =
++	    (u_char *)"proxy_cache_hit";
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE]->tag_name.len =
++	    sizeof("proxy_cache_scarce") - 1;
++	plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE]->tag_name.data =
++	    (u_char *)"proxy_cache_scarce";
++#endif
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 plcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++    }
++#endif
++
+     return NGX_CONF_OK;
+ }
+ 
+Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream.c
++++ nginx-catap/nginx/src/http/ngx_http_upstream.c
+@@ -455,6 +455,12 @@ ngx_http_upstream_init_request(ngx_http_
+ 
+         rc = ngx_http_upstream_cache(r, u);
+ 
++#if (NGX_STATUS)
++	if (u->conf->cache_status_counter[u->cache_status]) {
++	    ngx_status_fetch_add(u->conf->cache_status_counter[u->cache_status]);
++	}
++#endif
++
+         if (rc == NGX_BUSY) {
+             r->write_event_handler = ngx_http_upstream_init_request;
+             return;
+Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_fastcgi_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
+@@ -2800,6 +2800,168 @@ ngx_http_fastcgi_cache(ngx_conf_t *cf, n
+         return NGX_CONF_ERROR;
+     }
+ 
++#if (NGX_STATUS)
++    ngx_http_core_loc_conf_t  *clcf =
++	ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
++
++    if (clcf->request_counter) {
++
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS]->caption.len =
++	    sizeof("Fastcgi cache missing") - 1;
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS]->caption.data =
++	    (u_char *)"Fastcgi cache missing";
++
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS]->caption.len =
++	    sizeof("Fastcgi cache by pass") - 1;
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS]->caption.data =
++	    (u_char *)"Fastcgi cache by pass";
++
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED]->caption.len =
++	    sizeof("Fastcgi cache expired") - 1;
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED]->caption.data =
++	    (u_char *)"Fastcgi cache expired";
++
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE]->caption.len =
++	    sizeof("Fastcgi cache stale") - 1;
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE]->caption.data =
++	    (u_char *)"Fastcgi cache stale";
++
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING]->caption.len =
++	    sizeof("Fastcgi cache updating") - 1;
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING]->caption.data =
++	    (u_char *)"Fastcgi cache updating";
++
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT]->caption.len =
++	    sizeof("Fastcgi cache hit") - 1;
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT]->caption.data =
++	    (u_char *)"Fastcgi cache hit";
++
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE]->caption.len =
++	    sizeof("Fastcgi cache scarce") - 1;
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE]->caption.data =
++	    (u_char *)"Fastcgi cache scarce";
++
++#endif
++
++#if (NGX_STATUS_XML)
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS]->tag_name.len =
++	    sizeof("fastcgi_cache_miss") - 1;
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS]->tag_name.data =
++	    (u_char *)"fastcgi_cache_miss";
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS]->tag_name.len =
++	    sizeof("fastcgi_cache_bypass") - 1;
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS]->tag_name.data =
++	    (u_char *)"fastcgi_cache_bypass";
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED]->tag_name.len =
++	    sizeof("fastcgi_cache_expired") - 1;
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED]->tag_name.data =
++	    (u_char *)"fastcgi_cache_expired";
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE]->tag_name.len =
++	    sizeof("fastcgi_cache_stale") - 1;
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE]->tag_name.data =
++	    (u_char *)"fastcgi_cache_stale";
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING]->tag_name.len =
++	    sizeof("fastcgi_cache_updating") - 1;
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING]->tag_name.data =
++	    (u_char *)"fastcgi_cache_updating";
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT]->tag_name.len =
++	    sizeof("fastcgi_cache_hit") - 1;
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT]->tag_name.data =
++	    (u_char *)"fastcgi_cache_hit";
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE]->tag_name.len =
++	    sizeof("fastcgi_cache_scarce") - 1;
++	flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE]->tag_name.data =
++	    (u_char *)"fastcgi_cache_scarce";
++#endif
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 flcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++    }
++#endif
++
+     return NGX_CONF_OK;
+ }
+ 
+Index: nginx-catap/nginx/src/http/modules/ngx_http_scgi_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_scgi_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_scgi_module.c
+@@ -1627,6 +1627,168 @@ ngx_http_scgi_cache(ngx_conf_t *cf, ngx_
+         return NGX_CONF_ERROR;
+     }
+ 
++#if (NGX_STATUS)
++    ngx_http_core_loc_conf_t  *clcf =
++	ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
++
++    if (clcf->request_counter) {
++
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (scf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (scf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (scf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (scf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (scf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (scf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (scf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS]->caption.len =
++	    sizeof("scgi cache missing") - 1;
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS]->caption.data =
++	    (u_char *)"scgi cache missing";
++
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS]->caption.len =
++	    sizeof("scgi cache by pass") - 1;
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS]->caption.data =
++	    (u_char *)"scgi cache by pass";
++
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED]->caption.len =
++	    sizeof("scgi cache expired") - 1;
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED]->caption.data =
++	    (u_char *)"scgi cache expired";
++
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE]->caption.len =
++	    sizeof("scgi cache stale") - 1;
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE]->caption.data =
++	    (u_char *)"scgi cache stale";
++
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING]->caption.len =
++	    sizeof("scgi cache updating") - 1;
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING]->caption.data =
++	    (u_char *)"scgi cache updating";
++
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT]->caption.len =
++	    sizeof("scgi cache hit") - 1;
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT]->caption.data =
++	    (u_char *)"scgi cache hit";
++
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE]->caption.len =
++	    sizeof("scgi cache scarce") - 1;
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE]->caption.data =
++	    (u_char *)"scgi cache scarce";
++
++#endif
++
++#if (NGX_STATUS_XML)
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS]->tag_name.len =
++	    sizeof("scgi_cache_miss") - 1;
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS]->tag_name.data =
++	    (u_char *)"scgi_cache_miss";
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS]->tag_name.len =
++	    sizeof("scgi_cache_bypass") - 1;
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS]->tag_name.data =
++	    (u_char *)"scgi_cache_bypass";
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED]->tag_name.len =
++	    sizeof("scgi_cache_expired") - 1;
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED]->tag_name.data =
++	    (u_char *)"scgi_cache_expired";
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE]->tag_name.len =
++	    sizeof("scgi_cache_stale") - 1;
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE]->tag_name.data =
++	    (u_char *)"scgi_cache_stale";
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING]->tag_name.len =
++	    sizeof("scgi_cache_updating") - 1;
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING]->tag_name.data =
++	    (u_char *)"scgi_cache_updating";
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT]->tag_name.len =
++	    sizeof("scgi_cache_hit") - 1;
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT]->tag_name.data =
++	    (u_char *)"scgi_cache_hit";
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE]->tag_name.len =
++	    sizeof("scgi_cache_scarce") - 1;
++	scf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE]->tag_name.data =
++	    (u_char *)"scgi_cache_scarce";
++#endif
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 scf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 scf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 scf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 scf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 scf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 scf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 scf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++    }
++#endif
++
+     return NGX_CONF_OK;
+ }
+ 
+Index: nginx-catap/nginx/src/http/modules/ngx_http_uwsgi_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_uwsgi_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_uwsgi_module.c
+@@ -1679,6 +1679,168 @@ ngx_http_uwsgi_cache(ngx_conf_t *cf, ngx
+         return NGX_CONF_ERROR;
+     }
+ 
++#if (NGX_STATUS)
++    ngx_http_core_loc_conf_t  *clcf =
++	ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
++
++    if (clcf->request_counter) {
++
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE] =
++	    ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++	if (uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE] == NULL) {
++	    return NGX_CONF_ERROR;
++	}
++
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS]->caption.len =
++	    sizeof("uwsgi cache missing") - 1;
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS]->caption.data =
++	    (u_char *)"uwsgi cache missing";
++
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS]->caption.len =
++	    sizeof("uwsgi cache by pass") - 1;
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS]->caption.data =
++	    (u_char *)"uwsgi cache by pass";
++
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED]->caption.len =
++	    sizeof("uwsgi cache expired") - 1;
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED]->caption.data =
++	    (u_char *)"uwsgi cache expired";
++
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE]->caption.len =
++	    sizeof("uwsgi cache stale") - 1;
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE]->caption.data =
++	    (u_char *)"uwsgi cache stale";
++
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING]->caption.len =
++	    sizeof("uwsgi cache updating") - 1;
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING]->caption.data =
++	    (u_char *)"uwsgi cache updating";
++
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT]->caption.len =
++	    sizeof("uwsgi cache hit") - 1;
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT]->caption.data =
++	    (u_char *)"uwsgi cache hit";
++
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE]->caption.len =
++	    sizeof("uwsgi cache scarce") - 1;
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE]->caption.data =
++	    (u_char *)"uwsgi cache scarce";
++
++#endif
++
++#if (NGX_STATUS_XML)
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS]->tag_name.len =
++	    sizeof("uwsgi_cache_miss") - 1;
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS]->tag_name.data =
++	    (u_char *)"uwsgi_cache_miss";
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS]->tag_name.len =
++	    sizeof("uwsgi_cache_bypass") - 1;
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS]->tag_name.data =
++	    (u_char *)"uwsgi_cache_bypass";
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED]->tag_name.len =
++	    sizeof("uwsgi_cache_expired") - 1;
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED]->tag_name.data =
++	    (u_char *)"uwsgi_cache_expired";
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE]->tag_name.len =
++	    sizeof("uwsgi_cache_stale") - 1;
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE]->tag_name.data =
++	    (u_char *)"uwsgi_cache_stale";
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING]->tag_name.len =
++	    sizeof("uwsgi_cache_updating") - 1;
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING]->tag_name.data =
++	    (u_char *)"uwsgi_cache_updating";
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT]->tag_name.len =
++	    sizeof("uwsgi_cache_hit") - 1;
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT]->tag_name.data =
++	    (u_char *)"uwsgi_cache_hit";
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE]->tag_name.len =
++	    sizeof("uwsgi_cache_scarce") - 1;
++	uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE]->tag_name.data =
++	    (u_char *)"uwsgi_cache_scarce";
++#endif
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_MISS])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_BYPASS])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_EXPIRED])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_STALE])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_UPDATING])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_HIT])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 uwcf->upstream.cache_status_counter[NGX_HTTP_CACHE_SCARCE])
++	    != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
++    }
++#endif
++
+     return NGX_CONF_OK;
+ }
  
