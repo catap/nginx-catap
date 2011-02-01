@@ -111,7 +111,7 @@ Index: nginx-catap/nginx/src/core/ngx_status.c
 ===================================================================
 --- /dev/null
 +++ nginx-catap/nginx/src/core/ngx_status.c
-@@ -0,0 +1,289 @@
+@@ -0,0 +1,311 @@
 +
 +/*
 + * Copyright (C) Kirill A. Korinskiy
@@ -236,18 +236,28 @@ Index: nginx-catap/nginx/src/core/ngx_status.c
 +}
 +
 +
-+ngx_int_t
-+ngx_status_fetch_add(ngx_status_counter_t *counter)
++static ngx_int_t
++ngx_status_change(ngx_status_counter_t *counter, ngx_int_t n)
 +{
 +    ngx_atomic_t      *window;
 +    ngx_status_conf_t *conf;
++
++    if (counter == NULL) {
++        return NGX_DONE;
++    }
++
++    ngx_atomic_fetch_add(counter->accumulate, n);
++
++    if (counter->only_accumulate) {
++        return NGX_OK;
++    }
 +
 +    conf = (ngx_status_conf_t *) ngx_get_conf(ngx_cycle->conf_ctx,
 +                                              ngx_status_module);
 +
 +    window = counter->windows + (ngx_time() % (2 * conf->window));
 +
-+    ngx_atomic_fetch_add(window, 1);
++    ngx_atomic_fetch_add(window, n);
 +
 +    if (window - conf->window > counter->windows) {
 +        *(window - conf->window) = 0;
@@ -255,9 +265,21 @@ Index: nginx-catap/nginx/src/core/ngx_status.c
 +        *(window + conf->window) = 0;
 +    }
 +
-+    ngx_atomic_fetch_add(counter->accumulate, 1);
-+
 +    return NGX_OK;
++}
++
++
++ngx_int_t
++ngx_status_fetch_add(ngx_status_counter_t *counter)
++{
++    return ngx_status_change(counter, 1);
++}
++
++
++ngx_int_t
++ngx_status_fetch_sub(ngx_status_counter_t *counter)
++{
++    return ngx_status_change(counter, -1);
 +}
 +
 +
@@ -405,7 +427,7 @@ Index: nginx-catap/nginx/src/core/ngx_status.h
 ===================================================================
 --- /dev/null
 +++ nginx-catap/nginx/src/core/ngx_status.h
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,60 @@
 +
 +/*
 + * Copyright (C) Kirill A. Korinskiy
@@ -437,6 +459,8 @@ Index: nginx-catap/nginx/src/core/ngx_status.h
 +    ngx_atomic_t      *accumulate;
 +    ngx_atomic_t      *windows;
 +    ngx_status_list_t *childs;
++
++    ngx_int_t          only_accumulate:1;
 +} ngx_status_counter_t;
 +
 +struct ngx_status_list_s {
@@ -454,6 +478,7 @@ Index: nginx-catap/nginx/src/core/ngx_status.h
 +    ngx_status_counter_t *child);
 +
 +ngx_int_t ngx_status_fetch_add(ngx_status_counter_t *counter);
++ngx_int_t ngx_status_fetch_sub(ngx_status_counter_t *counter);
 +
 +ngx_int_t ngx_status_get_accumulate_value(ngx_status_counter_t *counter);
 +ngx_int_t ngx_status_get_periodic_value(ngx_status_counter_t *counter,
@@ -551,7 +576,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_status_txt_module.c
 ===================================================================
 --- /dev/null
 +++ nginx-catap/nginx/src/http/modules/ngx_http_status_txt_module.c
-@@ -0,0 +1,419 @@
+@@ -0,0 +1,426 @@
 +
 +/*
 + * Copyright (C) Kirill A. Korinskiy
@@ -636,8 +661,11 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_status_txt_module.c
 +
 +    while (c) {
 +        size += level * (sizeof(" ") - 1);
-+        size += sizeof(": ()\n") - 1 + c->counter->caption.len
-+            + NGX_INT_T_LEN + NGX_INT_T_LEN;
++        size += sizeof(": \n") - 1 + c->counter->caption.len
++            + NGX_INT_T_LEN;
++	if (!c->counter->only_accumulate) {
++	    size += sizeof("()") - 1 + NGX_INT_T_LEN;
++	}
 +
 +        if (!level) {
 +            if (period->num) {
@@ -687,19 +715,23 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_status_txt_module.c
 +            }
 +        }
 +
-+        periodic_value = ngx_status_get_periodic_value(c->counter,
-+                             period->num ? period->num : 1);
++	if (period->num) {
++	    p = ngx_sprintf(p, ": %uA", ngx_status_get_periodic_value(c->counter, period->num));
++	} else {
++            p = ngx_sprintf(p, ": %uA", ngx_status_get_accumulate_value(c->counter));
++	}
 +
-+        if (period->num) {
-+            p = ngx_sprintf(p, ": %uA(%uA)",
-+                            ngx_status_get_periodic_value(c->counter,
-+                                                          period->num),
-+                            periodic_value/period->num);
-+        } else {
-+            p = ngx_sprintf(p, ": %uA(%uA)",
-+                            ngx_status_get_accumulate_value(c->counter),
-+                            periodic_value);
-+        }
++	if (!c->counter->only_accumulate) {
++
++	    periodic_value =
++		ngx_status_get_periodic_value(c->counter, period->num ? period->num : 1);
++
++	    if (period->num) {
++		p = ngx_sprintf(p, "(%uA)", periodic_value/period->num);
++	    } else {
++		p = ngx_sprintf(p, ": (%uA)", periodic_value);
++	    }
++	}
 +
 +        *(p++) = '\n';
 +
@@ -975,7 +1007,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_status_xml_module.c
 ===================================================================
 --- /dev/null
 +++ nginx-catap/nginx/src/http/modules/ngx_http_status_xml_module.c
-@@ -0,0 +1,511 @@
+@@ -0,0 +1,515 @@
 +
 +/*
 + * Copyright (C) Kirill A. Korinskiy
@@ -1086,8 +1118,10 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_status_xml_module.c
 +        size += sizeof("<caption></caption>\n") - 1 + c->counter->caption.len;
 +        size += ngx_http_status_xml_len_space(level + 1);
 +        size += sizeof("<value></value>\n") - 1 + NGX_ATOMIC_T_LEN;
-+        size += ngx_http_status_xml_len_space(level + 1);
-+        size += sizeof("<avg></avg>\n") - 1 + NGX_ATOMIC_T_LEN;
++	if (!c->counter->only_accumulate) {
++	    size += ngx_http_status_xml_len_space(level + 1);
++            size += sizeof("<avg></avg>\n") - 1 + NGX_ATOMIC_T_LEN;
++	}
 +        if (c->counter->childs) {
 +            if (c->counter->tag_for_childs.len) {
 +                size += ngx_http_status_xml_len_space(level + 1);
@@ -1144,17 +1178,19 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_status_xml_module.c
 +                            ngx_status_get_accumulate_value(c->counter));
 +        }
 +
-+        periodic_value = ngx_status_get_periodic_value(c->counter,
-+                             period->num ? period->num : 1);
++	if (!c->counter->only_accumulate) {
++	    periodic_value = ngx_status_get_periodic_value(c->counter,
++							   period->num ? period->num : 1);
 +
-+         ngx_http_status_xml_add_space(p, level + 1);
-+        if (period->num) {
-+            p = ngx_sprintf(p, "<avg>%uA</avg>\n",
-+                            periodic_value/period->num);
-+        } else {
-+            p = ngx_sprintf(p, "<avg>%uA</avg>\n",
-+                            periodic_value);
-+        }
++	    ngx_http_status_xml_add_space(p, level + 1);
++	    if (period->num) {
++		p = ngx_sprintf(p, "<avg>%uA</avg>\n",
++				periodic_value/period->num);
++	    } else {
++		p = ngx_sprintf(p, "<avg>%uA</avg>\n",
++				periodic_value);
++	    }
++	}
 +
 +        if (c->counter->childs) {
 +            if (c->counter->label_for_childs.len) {
@@ -1700,7 +1736,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
  };
  
  
-@@ -928,6 +943,12 @@ ngx_http_core_find_config_phase(ngx_http
+@@ -928,6 +943,15 @@ ngx_http_core_find_config_phase(ngx_http
  
      clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
  
@@ -1708,12 +1744,40 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 +    if (clcf->request_counter) {
 +        ngx_status_fetch_add(clcf->request_counter);
 +    }
++    if (clcf->request_counter) {
++        ngx_status_fetch_add(clcf->active_request_counter);
++    }
 +#endif
 +
      if (!r->internal && clcf->internal) {
          ngx_http_finalize_request(r, NGX_HTTP_NOT_FOUND);
          return NGX_OK;
-@@ -2509,9 +2530,15 @@ ngx_http_core_server(ngx_conf_t *cf, ngx
+@@ -1005,6 +1029,10 @@ ngx_http_core_post_rewrite_phase(ngx_htt
+ {
+     ngx_http_core_srv_conf_t  *cscf;
+ 
++#if (NGX_STATUS)
++    ngx_http_core_loc_conf_t  *clcf;
++#endif
++
+     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                    "post rewrite phase: %ui", r->phase_handler);
+ 
+@@ -1013,6 +1041,13 @@ ngx_http_core_post_rewrite_phase(ngx_htt
+         return NGX_AGAIN;
+     }
+ 
++#if (NGX_STATUS)
++    clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
++    if (clcf->request_counter) {
++        ngx_status_fetch_sub(clcf->active_request_counter);
++    }
++#endif
++
+     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                    "uri changes: %d", r->uri_changes);
+ 
+@@ -2509,9 +2544,15 @@ ngx_http_core_server(ngx_conf_t *cf, ngx
  
      *cscfp = cscf;
  
@@ -1730,7 +1794,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      pcf = *cf;
      cf->ctx = ctx;
      cf->cmd_type = NGX_HTTP_SRV_CONF;
-@@ -2551,6 +2578,104 @@ ngx_http_core_server(ngx_conf_t *cf, ngx
+@@ -2551,6 +2592,104 @@ ngx_http_core_server(ngx_conf_t *cf, ngx
          }
      }
  
@@ -1835,7 +1899,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      return rv;
  }
  
-@@ -2567,6 +2692,10 @@ ngx_http_core_location(ngx_conf_t *cf, n
+@@ -2567,6 +2706,10 @@ ngx_http_core_location(ngx_conf_t *cf, n
      ngx_http_module_t         *module;
      ngx_http_conf_ctx_t       *ctx, *pctx;
      ngx_http_core_loc_conf_t  *clcf, *pclcf;
@@ -1846,7 +1910,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
  
      ctx = ngx_pcalloc(cf->pool, sizeof(ngx_http_conf_ctx_t));
      if (ctx == NULL) {
-@@ -2733,6 +2862,94 @@ ngx_http_core_location(ngx_conf_t *cf, n
+@@ -2733,6 +2876,113 @@ ngx_http_core_location(ngx_conf_t *cf, n
          }
      }
  
@@ -1861,12 +1925,23 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 +            return NGX_CONF_ERROR;
 +        }
 +
++        clcf->active_request_counter =
++            ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++        if (clcf->active_request_counter == NULL) {
++            return NGX_CONF_ERROR;
++        }
++
++        clcf->active_request_counter->only_accumulate = 1;
++
 +#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
 +        clcf->request_counter->caption.len = sizeof("Location ") - 1 + value[1].len;
 +        clcf->request_counter->label_for_childs.len =
 +            sizeof("extend location info") - 1;
 +        clcf->request_counter->label_for_childs.data =
 +            (u_char *)"extend location info";
++
++        clcf->active_request_counter->caption.len = sizeof("active request") - 1;
++        clcf->active_request_counter->caption.data = (u_char *)"active request";
 +#endif
 +
 +#if (NGX_STATUS_XML)
@@ -1875,6 +1950,9 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 +        clcf->request_counter->tag_for_childs.len = sizeof("extend_info") - 1;
 +        clcf->request_counter->tag_for_childs.data = (u_char *)"extend_info";
 +        clcf->request_counter->tag_value.len = value[1].len;
++
++        clcf->active_request_counter->tag_name.len = sizeof("active_request") - 1;
++        clcf->active_request_counter->tag_name.data = (u_char *)"active_request";
 +#endif
 +
 +
@@ -1934,6 +2012,11 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 +                                 clcf->request_counter) != NGX_OK) {
 +            return NGX_CONF_ERROR;
 +        }
++
++        if (ngx_status_add_child(cf->cycle, clcf->request_counter,
++                                 clcf->active_request_counter) != NGX_OK) {
++            return NGX_CONF_ERROR;
++        }
 +    }
 +
 +#endif
@@ -1941,7 +2024,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      if (ngx_http_add_location(cf, &pclcf->locations, clcf) != NGX_OK) {
          return NGX_CONF_ERROR;
      }
-@@ -3085,6 +3302,7 @@ ngx_http_core_create_loc_conf(ngx_conf_t
+@@ -3085,6 +3335,7 @@ ngx_http_core_create_loc_conf(ngx_conf_t
       *     clcf->auto_redirect = 0;
       *     clcf->alias = 0;
       *     clcf->gzip_proxied = 0;
@@ -1949,7 +2032,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
       */
  
      clcf->client_max_body_size = NGX_CONF_UNSET;
-@@ -3420,6 +3638,14 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
+@@ -3420,6 +3671,14 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
  #endif
  #endif
  
@@ -1964,7 +2047,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      return NGX_CONF_OK;
  }
  
-@@ -3444,6 +3670,10 @@ ngx_http_core_listen(ngx_conf_t *cf, ngx
+@@ -3444,6 +3703,10 @@ ngx_http_core_listen(ngx_conf_t *cf, ngx
      u.listen = 1;
      u.default_port = 80;
  
@@ -1975,7 +2058,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      if (ngx_parse_url(cf->pool, &u) != NGX_OK) {
          if (u.err) {
              ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-@@ -4517,6 +4747,73 @@ ngx_http_core_lowat_check(ngx_conf_t *cf
+@@ -4517,6 +4780,73 @@ ngx_http_core_lowat_check(ngx_conf_t *cf
  }
  
  
@@ -2076,12 +2159,13 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.h
  } ngx_http_core_srv_conf_t;
  
  
-@@ -408,6 +417,11 @@ struct ngx_http_core_loc_conf_s {
+@@ -408,6 +417,12 @@ struct ngx_http_core_loc_conf_s {
  
      ngx_queue_t  *locations;
  
 +#if (NGX_STATUS)
 +    ngx_status_counter_t  *request_counter;
++    ngx_status_counter_t  *active_request_counter;
 +    ngx_status_counter_t **status_counters;
 +#endif
 +
@@ -2363,7 +2447,52 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
      (void) ngx_atomic_fetch_add(ngx_stat_reading, -1);
      r->stat_reading = 0;
      (void) ngx_atomic_fetch_add(ngx_stat_writing, 1);
-@@ -2472,7 +2472,7 @@ ngx_http_set_keepalive(ngx_http_request_
+@@ -1878,6 +1878,8 @@ ngx_http_finalize_request(ngx_http_reque
+ 
+     c = r->connection;
+ 
++    clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
++
+     ngx_log_debug5(NGX_LOG_DEBUG_HTTP, c->log, 0,
+                    "http finalize request: %d, \"%V?%V\" a:%d, c:%d",
+                    rc, &r->uri, &r->args, r == c->data, r->main->count);
+@@ -1887,6 +1889,12 @@ ngx_http_finalize_request(ngx_http_reque
+         return;
+     }
+ 
++#if (NGX_STATUS)
++    if (clcf->request_counter) {
++        ngx_status_fetch_sub(clcf->active_request_counter);
++    }
++#endif
++
+     if (rc == NGX_OK && r->filter_finalize) {
+         c->error = 1;
+         return;
+@@ -1894,6 +1902,13 @@ ngx_http_finalize_request(ngx_http_reque
+ 
+     if (rc == NGX_DECLINED) {
+         r->content_handler = NULL;
++
++#if (NGX_STATUS)
++        if (clcf->request_counter) {
++            ngx_status_fetch_add(clcf->active_request_counter);
++        }
++#endif
++
+         r->write_event_handler = ngx_http_core_run_phases;
+         ngx_http_core_run_phases(r);
+         return;
+@@ -1973,8 +1988,6 @@ ngx_http_finalize_request(ngx_http_reque
+ 
+             if (!r->logged) {
+ 
+-                clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
+-
+                 if (clcf->log_subrequest) {
+                     ngx_http_log_request(r);
+                 }
+@@ -2472,7 +2485,7 @@ ngx_http_set_keepalive(ngx_http_request_
  
          ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0, "pipelined request");
  
@@ -2372,7 +2501,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
          (void) ngx_atomic_fetch_add(ngx_stat_reading, 1);
  #endif
  
-@@ -2702,7 +2702,7 @@ ngx_http_keepalive_handler(ngx_event_t *
+@@ -2702,7 +2715,7 @@ ngx_http_keepalive_handler(ngx_event_t *
  
      b->last += n;
  
@@ -2381,7 +2510,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
      (void) ngx_atomic_fetch_add(ngx_stat_reading, 1);
  #endif
  
-@@ -2952,7 +2952,7 @@ ngx_http_free_request(ngx_http_request_t
+@@ -2952,7 +2965,7 @@ ngx_http_free_request(ngx_http_request_t
          }
      }
  
@@ -2390,7 +2519,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
  
      if (r->stat_reading) {
          (void) ngx_atomic_fetch_add(ngx_stat_reading, -1);
-@@ -3039,7 +3039,7 @@ ngx_http_close_connection(ngx_connection
+@@ -3039,7 +3052,7 @@ ngx_http_close_connection(ngx_connection
  
  #endif
  
