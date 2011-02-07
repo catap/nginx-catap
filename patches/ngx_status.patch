@@ -2571,7 +2571,18 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.h
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_upstream.h
 +++ nginx-catap/nginx/src/http/ngx_http_upstream.h
-@@ -165,6 +165,12 @@ typedef struct {
+@@ -112,6 +112,10 @@ struct ngx_http_upstream_srv_conf_s {
+     ngx_uint_t                       line;
+     in_port_t                        port;
+     in_port_t                        default_port;
++
++#if (NGX_STATUS)
++    ngx_status_counter_t            *request_counter;
++#endif
+ };
+ 
+ 
+@@ -165,6 +169,12 @@ typedef struct {
      ngx_array_t                     *cache_valid;
      ngx_array_t                     *cache_bypass;
      ngx_array_t                     *no_cache;
@@ -2766,14 +2777,43 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
          rc = ngx_http_upstream_cache(r, u);
  
 +#if (NGX_STATUS)
-+	if (u->conf->cache_status_counter[u->cache_status]) {
-+	    ngx_status_fetch_add(u->conf->cache_status_counter[u->cache_status]);
-+	}
++        if (u->conf->cache_status_counter[u->cache_status]) {
++            ngx_status_fetch_add(u->conf->cache_status_counter[u->cache_status]);
++        }
 +#endif
 +
          if (rc == NGX_BUSY) {
              r->write_event_handler = ngx_http_upstream_init_request;
              return;
+@@ -474,6 +480,12 @@ ngx_http_upstream_init_request(ngx_http_
+ 
+ #endif
+ 
++#if (NGX_STATUS)
++    if (u->conf->upstream->request_counter) {
++        ngx_status_fetch_add(u->conf->upstream->request_counter);
++    }
++#endif
++
+     u->store = (u->conf->store || u->conf->store_lengths);
+ 
+     if (!u->store && !r->post_action && !u->conf->ignore_client_abort) {
+@@ -3961,7 +3973,6 @@ ngx_http_upstream(ngx_conf_t *cf, ngx_co
+         return NGX_CONF_ERROR;
+     }
+ 
+-
+     ctx = ngx_pcalloc(cf->pool, sizeof(ngx_http_conf_ctx_t));
+     if (ctx == NULL) {
+         return NGX_CONF_ERROR;
+@@ -4015,7 +4026,6 @@ ngx_http_upstream(ngx_conf_t *cf, ngx_co
+         }
+     }
+ 
+-
+     /* parse inside upstream{} */
+ 
+     pcf = *cf;
 Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/modules/ngx_http_fastcgi_module.c
@@ -3292,4 +3332,226 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_uwsgi_module.c
 +
      return NGX_CONF_OK;
  }
+ 
+Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream_round_robin.c
++++ nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
+@@ -13,6 +13,10 @@ static ngx_int_t ngx_http_upstream_cmp_s
+     const void *two);
+ static ngx_uint_t
+ ngx_http_upstream_get_peer(ngx_http_upstream_rr_peers_t *peers);
++#if (NGX_STATUS)
++static ngx_int_t ngx_http_upstream_add_rr_peer_status(ngx_conf_t *cf,
++    ngx_http_upstream_srv_conf_t *us, ngx_http_upstream_rr_peer_t *peer);
++#endif
+ 
+ 
+ ngx_int_t
+@@ -24,6 +28,46 @@ ngx_http_upstream_init_round_robin(ngx_c
+     ngx_http_upstream_server_t    *server;
+     ngx_http_upstream_rr_peers_t  *peers, *backup;
+ 
++#if (NGX_STATUS)
++    us->request_counter =
++        ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++    if (us->request_counter == NULL) {
++        return NGX_ERROR;
++    }
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++    us->request_counter->label_for_childs.len = sizeof("server info") - 1;
++    us->request_counter->label_for_childs.data = (u_char *)"server info";
++    us->request_counter->caption.len = sizeof("Request for upstream ") - 1
++        + us->host.len;
++
++    us->request_counter->caption.data =
++        ngx_palloc(cf->pool, us->request_counter->caption.len);
++    if (us->request_counter->caption.data == NULL) {
++        return NGX_ERROR;
++    }
++
++    ngx_sprintf(us->request_counter->caption.data,
++                "Request for upstream %V", &us->host);
++
++#endif
++
++#if (NGX_STATUS_XML)
++    us->request_counter->tag_for_childs.len = sizeof("servers") - 1;
++    us->request_counter->tag_for_childs.data = (u_char *)"servers";
++    us->request_counter->tag_name.len = sizeof("upstream") - 1;
++    us->request_counter->tag_name.data = (u_char *)"upstream";
++    us->request_counter->tag_value = us->host;
++#endif
++
++    if (ngx_status_add_counter(cf->cycle, &ngx_http_upstream_module,
++                               us->request_counter) != NGX_OK) {
++        return NGX_ERROR;
++    }
++
++
++#endif
++
+     us->peer.init = ngx_http_upstream_init_round_robin_peer;
+ 
+     if (us->servers) {
+@@ -65,6 +109,11 @@ ngx_http_upstream_init_round_robin(ngx_c
+                 peers->peer[n].down = server[i].down;
+                 peers->peer[n].weight = server[i].down ? 0 : server[i].weight;
+                 peers->peer[n].current_weight = peers->peer[n].weight;
++#if (NGX_STATUS)
++                if (ngx_http_upstream_add_rr_peer_status(cf, us, &(peers->peer[n])) != NGX_OK) {
++                    return NGX_ERROR;
++                }
++#endif
+                 n++;
+             }
+         }
+@@ -118,6 +167,11 @@ ngx_http_upstream_init_round_robin(ngx_c
+                 backup->peer[n].max_fails = server[i].max_fails;
+                 backup->peer[n].fail_timeout = server[i].fail_timeout;
+                 backup->peer[n].down = server[i].down;
++#if (NGX_STATUS)
++                if (ngx_http_upstream_add_rr_peer_status(cf, us, &(peers->peer[n])) != NGX_OK) {
++                    return NGX_ERROR;
++                }
++#endif
+                 n++;
+             }
+         }
+@@ -176,6 +230,11 @@ ngx_http_upstream_init_round_robin(ngx_c
+         peers->peer[i].current_weight = 1;
+         peers->peer[i].max_fails = 1;
+         peers->peer[i].fail_timeout = 10;
++#if (NGX_STATUS)
++        if (ngx_http_upstream_add_rr_peer_status(cf, us, &(peers->peer[i])) != NGX_OK) {
++            return NGX_ERROR;
++        }
++#endif
+     }
+ 
+     us->peer.data = peers;
+@@ -390,6 +449,13 @@ ngx_http_upstream_get_round_robin_peer(n
+         pc->connection = c;
+         pc->cached = 1;
+ 
++#if (NGX_STATUS)
++        peer = &rrp->peers->peer[rrp->current];
++        if (peer->request_counter) {
++            ngx_status_fetch_add(peer->request_counter);
++        }
++#endif
++
+         return NGX_OK;
+     }
+ 
+@@ -532,6 +598,12 @@ ngx_http_upstream_get_round_robin_peer(n
+         }
+     }
+ 
++#if (NGX_STATUS)
++    if (peer->request_counter) {
++        ngx_status_fetch_add(peer->request_counter);
++    }
++#endif
++
+     return NGX_OK;
+ 
+ failed:
+@@ -657,6 +729,12 @@ ngx_http_upstream_free_round_robin_peer(
+         peer->fails++;
+         peer->accessed = now;
+ 
++#if (NGX_STATUS)
++        if (peer->fails_counter) {
++            ngx_status_fetch_add(peer->fails_counter);
++        }
++#endif
++
+         if (peer->max_fails) {
+             peer->current_weight -= peer->weight / peer->max_fails;
+         }
+@@ -758,3 +836,67 @@ ngx_http_upstream_save_round_robin_peer_
+ }
+ 
+ #endif
++
++
++#if (NGX_STATUS)
++static ngx_int_t
++ngx_http_upstream_add_rr_peer_status(ngx_conf_t *cf,
++    ngx_http_upstream_srv_conf_t *us, ngx_http_upstream_rr_peer_t *peer)
++{
++    peer->request_counter =
++        ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++    if (peer->request_counter == NULL) {
++        return NGX_ERROR;
++    }
++
++    peer->fails_counter =
++        ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
++    if (peer->fails_counter == NULL) {
++        return NGX_ERROR;
++    }
++
++#if (NGX_STATUS_TXT) || (NGX_STATUS_XML)
++    peer->request_counter->label_for_childs.len = sizeof("extend server info") - 1;
++    peer->request_counter->label_for_childs.data = (u_char *)"extend server info";
++    peer->request_counter->caption.len = sizeof("Request for server ") - 1
++        + peer->name.len;
++
++    peer->request_counter->caption.data =
++        ngx_palloc(cf->pool, peer->request_counter->caption.len);
++    if (peer->request_counter->caption.data == NULL) {
++        return NGX_ERROR;
++    }
++
++    ngx_sprintf(peer->request_counter->caption.data,
++                "Request for server %V", &peer->name);
++
++    peer->fails_counter->caption.len = sizeof("Fails counter") - 1;
++    peer->fails_counter->caption.data = (u_char *)"Fails counter";
++
++#endif
++
++#if (NGX_STATUS_XML)
++    peer->request_counter->tag_for_childs.len = sizeof("extend_info") - 1;
++    peer->request_counter->tag_for_childs.data = (u_char *)"extend_info";
++    peer->request_counter->tag_name.len = sizeof("server") - 1;
++    peer->request_counter->tag_name.data = (u_char *)"server";
++    peer->request_counter->tag_value = peer->name;
++
++    peer->fails_counter->tag_name.len = sizeof("fails_counter") - 1;
++    peer->fails_counter->tag_name.data = (u_char *)"fails_counter";
++#endif
++
++    if (ngx_status_add_child(cf->cycle, us->request_counter,
++                             peer->request_counter) != NGX_OK) {
++        return NGX_ERROR;
++    }
++
++    if (ngx_status_add_child(cf->cycle, peer->request_counter,
++                             peer->fails_counter) != NGX_OK) {
++        return NGX_ERROR;
++    }
++
++    return NGX_OK;
++
++}
++#endif
+Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream_round_robin.h
++++ nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.h
+@@ -32,6 +32,11 @@ typedef struct {
+ #if (NGX_HTTP_SSL)
+     ngx_ssl_session_t              *ssl_session;   /* local to a process */
+ #endif
++
++#if (NGX_STATUS)
++    ngx_status_counter_t            *request_counter;
++    ngx_status_counter_t            *fails_counter;
++#endif
+ } ngx_http_upstream_rr_peer_t;
+ 
  

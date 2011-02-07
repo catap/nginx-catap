@@ -21,7 +21,7 @@ use Test::Nginx;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http proxy cache/)->plan(7)
+my $t = Test::Nginx->new()->has(qw/http proxy cache/)->plan(8)
 	->write_file_expand('nginx.conf', <<'EOF');
 
 %%TEST_GLOBALS%%
@@ -42,11 +42,6 @@ http {
         listen       127.0.0.1:8080;
         server_name  localhost;
 
-        location = /status.txt {
-            status_txt 0;
-        }
-
-
         location / {
             proxy_pass    http://127.0.0.1:8081;
 
@@ -62,6 +57,10 @@ http {
 
             proxy_cache_use_stale  error timeout invalid_header http_500
                                    http_404;
+        }
+
+        location = /status.txt {
+            status_txt 0;
         }
     }
 
@@ -112,5 +111,6 @@ like($status, qr/Proxy cache stale: 0/, 'count of stale');
 like($status, qr/Proxy cache updating: 0/, 'count of updating');
 like($status, qr/Proxy cache hit: 3/, 'count of hit');
 like($status, qr/Proxy cache scarce: 0/, 'count of scarce');
+like($status, qr/Request for server 127.0.0.1:8081: 6/, 'count of upstream request');
 
 ###############################################################################
