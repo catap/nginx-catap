@@ -1,0 +1,46 @@
+Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_core_module.c
++++ nginx-catap/nginx/src/http/ngx_http_core_module.c
+@@ -952,6 +952,14 @@ ngx_http_core_find_config_phase(ngx_http
+     }
+ #endif
+ 
++    if (!clcf->regex_locations) {
++        r->uri_remainder.len = r->uri.len - clcf->name.len;
++        r->uri_remainder.data = r->uri.data + clcf->name.len;
++    } else {
++        r->uri_remainder.len = 0;
++        r->uri_remainder.data = NULL;
++    }
++
+     if (!r->internal && clcf->internal) {
+         ngx_http_finalize_request(r, NGX_HTTP_NOT_FOUND);
+         return NGX_OK;
+Index: nginx-catap/nginx/src/http/ngx_http_request.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_request.h
++++ nginx-catap/nginx/src/http/ngx_http_request.h
+@@ -386,6 +386,7 @@ struct ngx_http_request_s {
+ 
+     ngx_str_t                         request_line;
+     ngx_str_t                         uri;
++    ngx_str_t                         uri_remainder;
+     ngx_str_t                         args;
+     ngx_str_t                         exten;
+     ngx_str_t                         unparsed_uri;
+Index: nginx-catap/nginx/src/http/ngx_http_variables.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_variables.c
++++ nginx-catap/nginx/src/http/ngx_http_variables.c
+@@ -168,6 +168,10 @@ static ngx_http_variable_t  ngx_http_cor
+       offsetof(ngx_http_request_t, uri),
+       NGX_HTTP_VAR_NOCACHEABLE, 0 },
+ 
++    { ngx_string("uri_remainder"), NULL, ngx_http_variable_request,
++      offsetof(ngx_http_request_t, uri_remainder),
++      NGX_HTTP_VAR_NOCACHEABLE, 0 },
++
+     { ngx_string("document_uri"), NULL, ngx_http_variable_request,
+       offsetof(ngx_http_request_t, uri),
+       NGX_HTTP_VAR_NOCACHEABLE, 0 },
