@@ -5,3 +5,4 @@ timestamp_http_variable.patch
 ngx_http_etag.patch
 ngx_http_auth_basic_valid_user.patch
 ngx_status.patch
+catap's_hash.patch
