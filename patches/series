@@ -7,3 +7,4 @@ ngx_http_auth_basic_valid_user.patch
 ngx_status.patch
 catap's_hash.patch
 uri_remainder.patch
+ngx_http_status_heap.patch

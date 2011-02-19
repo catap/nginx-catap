@@ -1,0 +1,421 @@
+Index: nginx-catap/nginx/auto/modules
+===================================================================
+--- nginx-catap.orig/nginx/auto/modules
++++ nginx-catap/nginx/auto/modules
+@@ -356,6 +356,11 @@ if [ $NGX_STATUS = YES ]; then
+     fi
+ fi
+ 
++if [ $HTTP_STATUS_HEAP = YES ]; then
++    HTTP_MODULES="$HTTP_MODULES $HTTP_STATUS_HEAP_MODULE"
++    HTTP_SRCS="$HTTP_SRCS $HTTP_STATUS_HEAP_SRCS"
++fi
++
+ #if [ -r $NGX_OBJS/auto ]; then
+ #    . $NGX_OBJS/auto
+ #fi
+Index: nginx-catap/nginx/auto/options
+===================================================================
+--- nginx-catap.orig/nginx/auto/options
++++ nginx-catap/nginx/auto/options
+@@ -97,6 +97,7 @@ HTTP_UPSTREAM_IP_HASH=YES
+ 
+ # STUB
+ HTTP_STUB_STATUS=NO
++HTTP_STATUS_HEAP=NO
+ 
+ MAIL=NO
+ MAIL_SSL=NO
+@@ -240,6 +241,7 @@ do
+ 
+         # STUB
+         --with-http_stub_status_module)  HTTP_STUB_STATUS=YES       ;;
++        --with-http_status_heap_module)  HTTP_STATUS_HEAP=YES       ;;
+ 
+         --with-mail)                     MAIL=YES                   ;;
+         --with-mail_ssl_module)          MAIL_SSL=YES               ;;
+@@ -349,6 +351,7 @@ cat << END
+   --with-http_secure_link_module     enable ngx_http_secure_link_module
+   --with-http_degradation_module     enable ngx_http_degradation_module
+   --with-http_stub_status_module     enable ngx_http_stub_status_module
++  --with-http_status_heap_module     enable ngx_http_status_heap_module
+ 
+   --without-http_charset_module      disable ngx_http_charset_module
+   --without-http_gzip_module         disable ngx_http_gzip_module
+Index: nginx-catap/nginx/auto/sources
+===================================================================
+--- nginx-catap.orig/nginx/auto/sources
++++ nginx-catap/nginx/auto/sources
+@@ -381,6 +381,10 @@ HTTP_STATUS_MODULE=ngx_http_status_modul
+ HTTP_STATUS_SRCS=src/http/modules/ngx_http_status_module.c
+ 
+ 
++HTTP_STATUS_HEAP_MODULE=ngx_http_status_heap_module
++HTTP_STATUS_HEAP_SRCS=src/http/modules/ngx_http_status_heap_module.c
++
++
+ HTTP_GEO_MODULE=ngx_http_geo_module
+ HTTP_GEO_SRCS=src/http/modules/ngx_http_geo_module.c
+ 
+Index: nginx-catap/nginx/src/http/modules/ngx_http_status_heap_module.c
+===================================================================
+--- /dev/null
++++ nginx-catap/nginx/src/http/modules/ngx_http_status_heap_module.c
+@@ -0,0 +1,357 @@
++
++/*
++ * Copyright (C) Kirill A. Korinskiy
++ */
++
++
++#include <ngx_config.h>
++#include <ngx_core.h>
++#include <ngx_http.h>
++
++
++typedef struct {
++    ngx_rbtreehash_t             heap;
++} ngx_http_status_heap_srv_conf_t;
++
++typedef struct {
++    ngx_uint_t counter;
++
++    size_t     len;
++    u_char     data[1];
++} ngx_http_status_heap_node_t;
++
++
++static ngx_int_t ngx_http_status_heap_init(ngx_conf_t *cf);
++
++static void *ngx_http_status_heap_create_srv_conf(ngx_conf_t *cf);
++static char *ngx_http_status_heap_merge_srv_conf(ngx_conf_t *cf,
++    void *parent, void *child);
++
++static char *ngx_http_status_heap_show(ngx_conf_t *cf,
++    ngx_command_t *cmd, void *conf);
++static char *ngx_http_status_heap_show_all(ngx_conf_t *cf,
++    ngx_command_t *cmd, void *conf);
++
++static ngx_int_t ngx_http_status_heap_add_handler(ngx_http_request_t *r);
++static ngx_int_t ngx_http_status_heap_show_handler(ngx_http_request_t *r);
++static ngx_int_t ngx_http_status_heap_show_all_handler(ngx_http_request_t *r);
++
++
++static ngx_command_t  ngx_http_status_heap_commands[] = {
++
++    { ngx_string("status_heap_show"),
++      NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_NOARGS,
++      ngx_http_status_heap_show,
++      NGX_HTTP_LOC_CONF_OFFSET,
++      0,
++      NULL },
++
++
++    { ngx_string("status_heap_show_all"),
++      NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_NOARGS,
++      ngx_http_status_heap_show_all,
++      NGX_HTTP_LOC_CONF_OFFSET,
++      0,
++      NULL },
++
++    { ngx_string("status_heap"),
++      NGX_HTTP_SRV_CONF|NGX_CONF_TAKE2,
++      ngx_rbtreehash_crete_shared_by_size,
++      NGX_HTTP_SRV_CONF_OFFSET,
++      offsetof(ngx_http_status_heap_srv_conf_t, heap),
++      NULL },
++
++      ngx_null_command
++};
++
++
++static ngx_http_module_t  ngx_http_status_heap_module_ctx = {
++    NULL,                                  /* preconfiguration */
++    ngx_http_status_heap_init,             /* postconfiguration */
++
++    NULL,                                  /* create main configuration */
++    NULL,                                  /* init main configuration */
++
++    ngx_http_status_heap_create_srv_conf,  /* create server configuration */
++    ngx_http_status_heap_merge_srv_conf,   /* merge server configuration */
++
++    NULL,                                  /* create location configration */
++    NULL                                   /* merge location configration */
++};
++
++
++ngx_module_t  ngx_http_status_heap_module = {
++    NGX_MODULE_V1,
++    &ngx_http_status_heap_module_ctx,      /* module context */
++    ngx_http_status_heap_commands,         /* module directives */
++    NGX_HTTP_MODULE,                       /* module type */
++    NULL,                                  /* init master */
++    NULL,                                  /* init module */
++    NULL,                                  /* init process */
++    NULL,                                  /* init thread */
++    NULL,                                  /* exit thread */
++    NULL,                                  /* exit process */
++    NULL,                                  /* exit master */
++    NGX_MODULE_V1_PADDING
++};
++
++
++static ngx_int_t
++ngx_http_status_heap_add_handler(ngx_http_request_t *r)
++{
++    size_t   len = 0;
++
++    ngx_http_status_heap_node_t     *node;
++    ngx_http_status_heap_srv_conf_t *conf;
++
++    conf = ngx_http_get_module_srv_conf(r, ngx_http_status_heap_module);
++
++    if (conf->heap.data == NULL) {
++	return NGX_DECLINED;
++    }
++
++    node = ngx_rbtreehash_find(&conf->heap, &r->uri, &len);
++    if (len && len < offsetof(ngx_http_status_heap_node_t, data)) {
++	return NGX_HTTP_INTERNAL_SERVER_ERROR;
++    }
++
++    if (node) {
++        node->counter++;
++	return NGX_DECLINED;
++    }
++
++    len = offsetof(ngx_http_status_heap_node_t, data) + r->uri.len;
++
++    node = ngx_pcalloc(r->pool, len);
++    if (node == NULL) {
++	return NGX_HTTP_INTERNAL_SERVER_ERROR;
++    }
++
++    node->counter = 1;
++
++    node->len = r->uri.len;
++
++    ngx_memcpy(node->data, r->uri.data, r->uri.len);
++
++    ngx_rbtreehash_insert(&conf->heap, &r->uri, node, len);
++
++    return NGX_DECLINED;
++}
++
++
++static ngx_int_t
++ngx_http_status_heap_show_handler(ngx_http_request_t *r)
++{
++    size_t       len = 0;
++    ngx_buf_t   *b;
++    ngx_int_t    rc;
++    ngx_chain_t  out;
++
++    ngx_http_status_heap_node_t     *node;
++    ngx_http_status_heap_srv_conf_t *conf;
++
++    if (r->method != NGX_HTTP_GET && r->method != NGX_HTTP_HEAD) {
++        return NGX_HTTP_NOT_ALLOWED;
++    }
++
++    rc = ngx_http_discard_request_body(r);
++
++    if (rc != NGX_OK) {
++        return rc;
++    }
++
++    r->headers_out.content_type.len = sizeof("text/plain") - 1;
++    r->headers_out.content_type.data = (u_char *) "text/plain";
++
++    conf = ngx_http_get_module_srv_conf(r, ngx_http_status_heap_module);
++
++    if (conf->heap.data == NULL) {
++	return NGX_HTTP_NOT_FOUND;
++    }
++
++    node = ngx_rbtreehash_find(&conf->heap, &r->uri_remainder, &len);
++    if (len && len < offsetof(ngx_http_status_heap_node_t, data)) {
++	return NGX_HTTP_INTERNAL_SERVER_ERROR;
++    }
++
++    if (node == NULL) {
++	return NGX_HTTP_NOT_FOUND;
++    }
++
++    b = ngx_create_temp_buf(r->pool, NGX_INT_T_LEN);
++    if (b == NULL) {
++        return NGX_HTTP_INTERNAL_SERVER_ERROR;
++    }
++
++    out.buf = b;
++    out.next = NULL;
++
++    b->last = ngx_sprintf(b->last, "%d", node->counter);
++
++    r->headers_out.status = NGX_HTTP_OK;
++    r->headers_out.content_length_n = b->last - b->pos;
++
++    b->last_buf = 1;
++
++    rc = ngx_http_send_header(r);
++
++    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
++        return rc;
++    }
++
++    return ngx_http_output_filter(r, &out);
++}
++
++
++static ngx_int_t
++ngx_http_status_heap_show_all_handler(ngx_http_request_t *r)
++{
++    size_t       len = 0;
++    ngx_buf_t   *b;
++    ngx_int_t    rc;
++    ngx_str_t    uri;
++    ngx_chain_t *out, *out_head = NULL, *out_prev = NULL;
++
++    ngx_rbtreehash_list_node_t      *item;
++    ngx_http_status_heap_node_t     *node;
++    ngx_http_status_heap_srv_conf_t *conf;
++
++    if (r->method != NGX_HTTP_GET && r->method != NGX_HTTP_HEAD) {
++        return NGX_HTTP_NOT_ALLOWED;
++    }
++
++    rc = ngx_http_discard_request_body(r);
++
++    if (rc != NGX_OK) {
++        return rc;
++    }
++
++    r->headers_out.content_type.len = sizeof("text/plain") - 1;
++    r->headers_out.content_type.data = (u_char *) "text/plain";
++
++    conf = ngx_http_get_module_srv_conf(r, ngx_http_status_heap_module);
++
++    if (conf->heap.data == NULL) {
++	return NGX_HTTP_NOT_FOUND;
++    }
++
++    item = conf->heap.data->list.head;
++
++    while (item) {
++	out = ngx_palloc(r->pool, sizeof(ngx_chain_t));
++	if (out == NULL) {
++	    return NGX_HTTP_INTERNAL_SERVER_ERROR;
++	}
++
++	if (out_head == NULL) {
++	    out_head = out;
++	}
++
++	if (out_prev != NULL) {
++	    out_prev->next = out;
++	}
++
++	out->next = NULL;
++
++	node = (ngx_http_status_heap_node_t *) item->data;
++
++	uri.len = node->len;
++	uri.data = node->data;
++
++	b = ngx_create_temp_buf(r->pool, uri.len + sizeof("\t\n") - 1 + NGX_INT_T_LEN);
++	if (b == NULL) {
++	    return NGX_HTTP_INTERNAL_SERVER_ERROR;
++	}
++
++	out->buf = b;
++
++	b->last = ngx_sprintf(b->last, "%V\t%d\n", &uri, node->counter);
++
++	len += b->last - b->pos;
++
++	out_prev = out;
++
++	item = item->next;
++    }
++
++
++    r->headers_out.status = NGX_HTTP_OK;
++    r->headers_out.content_length_n = len;
++
++    b->last_buf = 1;
++
++    rc = ngx_http_send_header(r);
++
++    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
++        return rc;
++    }
++
++    return ngx_http_output_filter(r, out_head);
++}
++
++
++static ngx_int_t ngx_http_status_heap_init(ngx_conf_t *cf)
++{
++    ngx_http_handler_pt        *h;
++    ngx_http_core_main_conf_t  *cmcf;
++
++    cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
++
++    h = ngx_array_push(&cmcf->phases[NGX_HTTP_POST_READ_PHASE].handlers);
++    if (h == NULL) {
++        return NGX_ERROR;
++    }
++
++    *h = ngx_http_status_heap_add_handler;
++
++    return NGX_OK;
++}
++
++
++static void *ngx_http_status_heap_create_srv_conf(ngx_conf_t *cf)
++{
++    ngx_http_status_heap_srv_conf_t *conf;
++
++    conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_status_heap_srv_conf_t));
++    if (conf == NULL) {
++        return NGX_CONF_ERROR;
++    }
++
++    return conf;
++}
++
++
++static char *ngx_http_status_heap_merge_srv_conf(ngx_conf_t *cf,
++    void *parent, void *child)
++{
++    ngx_http_status_heap_srv_conf_t *prev = parent;
++    ngx_http_status_heap_srv_conf_t *conf = child;
++
++    ngx_rbtreehash_merge_value(&conf->heap, &prev->heap);
++
++    return NGX_CONF_OK;
++}
++
++
++static char *
++ngx_http_status_heap_show(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
++{
++    ngx_http_core_loc_conf_t  *clcf;
++
++    clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
++    clcf->handler = ngx_http_status_heap_show_handler;
++
++    return NGX_CONF_OK;
++}
++
++
++static char *
++ngx_http_status_heap_show_all(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
++{
++    ngx_http_core_loc_conf_t  *clcf;
++
++    clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
++    clcf->handler = ngx_http_status_heap_show_all_handler;
++
++    return NGX_CONF_OK;
++}
