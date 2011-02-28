@@ -8,3 +8,4 @@ ngx_status.patch
 catap's_hash.patch
 uri_remainder.patch
 ngx_http_status_heap.patch
+ngx_http_upstream_count_limit.patch

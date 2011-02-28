@@ -1,0 +1,200 @@
+Index: nginx-catap/nginx/src/http/modules/ngx_http_upstream_ip_hash_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_upstream_ip_hash_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_upstream_ip_hash_module.c
+@@ -101,6 +101,9 @@ ngx_http_upstream_init_ip_hash_peer(ngx_
+         return NGX_ERROR;
+     }
+ 
++    iphp->rrp.u = r->upstream;
++    iphp->rrp.peers_is_backup = 0;
++
+     r->upstream->peer.data = &iphp->rrp;
+ 
+     if (ngx_http_upstream_init_round_robin_peer(r, us) != NGX_OK) {
+Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream.c
++++ nginx-catap/nginx/src/http/ngx_http_upstream.c
+@@ -9,6 +9,11 @@
+ #include <ngx_http.h>
+ 
+ 
++typedef struct {
++    ngx_uint_t           count_limit;
++} ngx_http_upstream_local_conf_t;
++
++
+ #if (NGX_HTTP_CACHE)
+ static ngx_int_t ngx_http_upstream_cache(ngx_http_request_t *r,
+     ngx_http_upstream_t *u);
+@@ -134,6 +139,10 @@ static char *ngx_http_upstream_status_ca
+     ngx_command_t *cmd, void *conf);
+ #endif
+ 
++static void *ngx_http_upstream_create_local_conf(ngx_conf_t *cf);
++static char *ngx_http_upstream_merge_local_conf(ngx_conf_t *cf,
++    void *parent, void *child);
++
+ #if (NGX_HTTP_SSL)
+ static void ngx_http_upstream_ssl_init_connection(ngx_http_request_t *,
+     ngx_http_upstream_t *u, ngx_connection_t *c);
+@@ -290,6 +299,14 @@ static ngx_command_t  ngx_http_upstream_
+ 
+ #endif
+ 
++    { ngx_string("upstream_count_limit"),
++      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LIF_CONF
++                        |NGX_CONF_FLAG,
++      ngx_conf_set_num_slot,
++      NGX_HTTP_LOC_CONF_OFFSET,
++      offsetof(ngx_http_upstream_local_conf_t, count_limit),
++      NULL },
++
+       ngx_null_command
+ };
+ 
+@@ -304,8 +321,8 @@ static ngx_http_module_t  ngx_http_upstr
+     NULL,                                  /* create server configuration */
+     NULL,                                  /* merge server configuration */
+ 
+-    NULL,                                  /* create location configuration */
+-    NULL                                   /* merge location configuration */
++    ngx_http_upstream_create_local_conf,   /* create location configuration */
++    ngx_http_upstream_merge_local_conf     /* merge location configuration */
+ };
+ 
+ 
+@@ -420,6 +437,10 @@ void
+ ngx_http_upstream_init(ngx_http_request_t *r)
+ {
+     ngx_connection_t     *c;
++    ngx_http_upstream_t  *u;
++    ngx_http_upstream_local_conf_t  *conf;
++
++    conf = ngx_http_get_module_loc_conf(r, ngx_http_upstream_module);
+ 
+     c = r->connection;
+ 
+@@ -430,6 +451,13 @@ ngx_http_upstream_init(ngx_http_request_
+         ngx_del_timer(c->read);
+     }
+ 
++    u = r->upstream;
++
++    if (conf->count_limit) {
++	u->count_limit = conf->count_limit;
++	u->count_limit_origin = conf->count_limit;
++    }
++
+     if (ngx_event_flags & NGX_USE_CLEAR_EVENT) {
+ 
+         if (!c->write->active) {
+@@ -4573,3 +4601,31 @@ ngx_http_upstream_init_main_conf(ngx_con
+ 
+     return NGX_CONF_OK;
+ }
++
++
++static void *
++ngx_http_upstream_create_local_conf(ngx_conf_t *cf)
++{
++    ngx_http_upstream_local_conf_t  *conf;
++
++    conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_upstream_local_conf_t));
++    if (conf == NULL) {
++        return NGX_CONF_ERROR;
++    }
++
++    conf->count_limit = NGX_CONF_UNSET_UINT;
++
++    return conf;
++}
++
++static char *
++ngx_http_upstream_merge_local_conf(ngx_conf_t *cf, void *parent, void *child)
++{
++    ngx_http_upstream_local_conf_t  *prev = parent;
++    ngx_http_upstream_local_conf_t  *conf = child;
++
++    ngx_conf_merge_uint_value(conf->count_limit,
++                              prev->count_limit, 0);
++
++    return NGX_CONF_OK;
++}
+Index: nginx-catap/nginx/src/http/ngx_http_upstream.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream.h
++++ nginx-catap/nginx/src/http/ngx_http_upstream.h
+@@ -309,6 +309,9 @@ struct ngx_http_upstream_s {
+ 
+     ngx_http_cleanup_pt             *cleanup;
+ 
++    ngx_flag_t                       count_limit;
++    ngx_uint_t                       count_limit_origin;
++
+     unsigned                         store:1;
+     unsigned                         cacheable:1;
+     unsigned                         accel:1;
+Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream_round_robin.c
++++ nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
+@@ -273,6 +273,8 @@ ngx_http_upstream_init_round_robin_peer(
+         }
+ 
+         r->upstream->peer.data = rrp;
++        rrp->u = r->upstream;
++        rrp->peers_is_backup = 0;
+     }
+ 
+     rrp->peers = us->peer.data;
+@@ -326,6 +328,8 @@ ngx_http_upstream_create_round_robin_pee
+         }
+ 
+         r->upstream->peer.data = rrp;
++	rrp->u = r->upstream;
++	rrp->peers_is_backup = 0;
+     }
+ 
+     peers = ngx_pcalloc(r->pool, sizeof(ngx_http_upstream_rr_peers_t)
+@@ -430,6 +434,17 @@ ngx_http_upstream_get_round_robin_peer(n
+ 
+     now = ngx_time();
+ 
++    if (!rrp->peers_is_backup &&
++	rrp->u->count_limit_origin &&
++	rrp->u->count_limit == 0) {
++	ngx_log_error(NGX_LOG_INFO, pc->log, 0,
++		      "http next upstream limited by upstream_count_limit %d ",
++		      rrp->u->count_limit_origin);
++	goto failed;
++    } else if (rrp->u->count_limit) {
++	rrp->u->count_limit--;
++    }
++
+     /* ngx_lock_mutex(rrp->peers->mutex); */
+ 
+     if (rrp->peers->last_cached) {
+@@ -619,6 +634,8 @@ failed:
+         rrp->peers = peers->next;
+         pc->tries = rrp->peers->number;
+ 
++	rrp->peers_is_backup = 1;
++
+         n = rrp->peers->number / (8 * sizeof(uintptr_t)) + 1;
+         for (i = 0; i < n; i++) {
+              rrp->tried[i] = 0;
+Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream_round_robin.h
++++ nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.h
+@@ -64,6 +64,8 @@ typedef struct {
+     ngx_uint_t                      current;
+     uintptr_t                      *tried;
+     uintptr_t                       data;
++    ngx_http_upstream_t            *u;
++    ngx_uint_t                      peers_is_backup;
+ } ngx_http_upstream_rr_peer_data_t;
+ 
+ 
