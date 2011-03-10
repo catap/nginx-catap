@@ -1736,7 +1736,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
  };
  
  
-@@ -928,6 +943,15 @@ ngx_http_core_find_config_phase(ngx_http
+@@ -928,6 +943,16 @@ ngx_http_core_find_config_phase(ngx_http
  
      clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
  
@@ -1745,6 +1745,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 +        ngx_status_fetch_add(clcf->request_counter);
 +    }
 +    if (clcf->request_counter) {
++        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "status add active_request_counter");
 +        ngx_status_fetch_add(clcf->active_request_counter);
 +    }
 +#endif
@@ -1752,7 +1753,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      if (!r->internal && clcf->internal) {
          ngx_http_finalize_request(r, NGX_HTTP_NOT_FOUND);
          return NGX_OK;
-@@ -1005,6 +1029,10 @@ ngx_http_core_post_rewrite_phase(ngx_htt
+@@ -1005,6 +1030,10 @@ ngx_http_core_post_rewrite_phase(ngx_htt
  {
      ngx_http_core_srv_conf_t  *cscf;
  
@@ -1763,13 +1764,14 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                     "post rewrite phase: %ui", r->phase_handler);
  
-@@ -1013,6 +1041,13 @@ ngx_http_core_post_rewrite_phase(ngx_htt
+@@ -1013,6 +1042,14 @@ ngx_http_core_post_rewrite_phase(ngx_htt
          return NGX_AGAIN;
      }
  
 +#if (NGX_STATUS)
 +    clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
 +    if (clcf->request_counter) {
++        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "status sub active_request_counter");
 +        ngx_status_fetch_sub(clcf->active_request_counter);
 +    }
 +#endif
@@ -1777,7 +1779,35 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                     "uri changes: %d", r->uri_changes);
  
-@@ -2509,9 +2544,15 @@ ngx_http_core_server(ngx_conf_t *cf, ngx
+@@ -2296,6 +2333,11 @@ ngx_http_internal_redirect(ngx_http_requ
+ {
+     ngx_http_core_srv_conf_t  *cscf;
+ 
++#if (NGX_STATUS)
++    ngx_http_core_loc_conf_t  *clcf;
++#endif
++
++
+     r->uri_changes--;
+ 
+     if (r->uri_changes == 0) {
+@@ -2308,6 +2350,15 @@ ngx_http_internal_redirect(ngx_http_requ
+         return NGX_DONE;
+     }
+ 
++#if (NGX_STATUS)
++    clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
++
++    if (clcf->request_counter) {
++        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "status sub active_request_counter");
++        ngx_status_fetch_sub(clcf->active_request_counter);
++    }
++#endif
++
+     r->uri = *uri;
+ 
+     if (args) {
+@@ -2509,9 +2560,15 @@ ngx_http_core_server(ngx_conf_t *cf, ngx
  
      *cscfp = cscf;
  
@@ -1794,7 +1824,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      pcf = *cf;
      cf->ctx = ctx;
      cf->cmd_type = NGX_HTTP_SRV_CONF;
-@@ -2551,6 +2592,104 @@ ngx_http_core_server(ngx_conf_t *cf, ngx
+@@ -2551,6 +2608,104 @@ ngx_http_core_server(ngx_conf_t *cf, ngx
          }
      }
  
@@ -1899,7 +1929,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      return rv;
  }
  
-@@ -2567,6 +2706,10 @@ ngx_http_core_location(ngx_conf_t *cf, n
+@@ -2567,6 +2722,10 @@ ngx_http_core_location(ngx_conf_t *cf, n
      ngx_http_module_t         *module;
      ngx_http_conf_ctx_t       *ctx, *pctx;
      ngx_http_core_loc_conf_t  *clcf, *pclcf;
@@ -1910,7 +1940,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
  
      ctx = ngx_pcalloc(cf->pool, sizeof(ngx_http_conf_ctx_t));
      if (ctx == NULL) {
-@@ -2733,6 +2876,113 @@ ngx_http_core_location(ngx_conf_t *cf, n
+@@ -2733,6 +2892,113 @@ ngx_http_core_location(ngx_conf_t *cf, n
          }
      }
  
@@ -2024,7 +2054,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      if (ngx_http_add_location(cf, &pclcf->locations, clcf) != NGX_OK) {
          return NGX_CONF_ERROR;
      }
-@@ -3085,6 +3335,7 @@ ngx_http_core_create_loc_conf(ngx_conf_t
+@@ -3085,6 +3351,7 @@ ngx_http_core_create_loc_conf(ngx_conf_t
       *     clcf->auto_redirect = 0;
       *     clcf->alias = 0;
       *     clcf->gzip_proxied = 0;
@@ -2032,7 +2062,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
       */
  
      clcf->client_max_body_size = NGX_CONF_UNSET;
-@@ -3420,6 +3671,14 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
+@@ -3420,6 +3687,14 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
  #endif
  #endif
  
@@ -2047,7 +2077,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      return NGX_CONF_OK;
  }
  
-@@ -3444,6 +3703,10 @@ ngx_http_core_listen(ngx_conf_t *cf, ngx
+@@ -3444,6 +3719,10 @@ ngx_http_core_listen(ngx_conf_t *cf, ngx
      u.listen = 1;
      u.default_port = 80;
  
@@ -2058,7 +2088,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      if (ngx_parse_url(cf->pool, &u) != NGX_OK) {
          if (u.err) {
              ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-@@ -4517,6 +4780,75 @@ ngx_http_core_lowat_check(ngx_conf_t *cf
+@@ -4517,6 +4796,75 @@ ngx_http_core_lowat_check(ngx_conf_t *cf
  }
  
  
@@ -2458,12 +2488,13 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
      ngx_log_debug5(NGX_LOG_DEBUG_HTTP, c->log, 0,
                     "http finalize request: %d, \"%V?%V\" a:%d, c:%d",
                     rc, &r->uri, &r->args, r == c->data, r->main->count);
-@@ -1887,6 +1889,12 @@ ngx_http_finalize_request(ngx_http_reque
+@@ -1887,6 +1889,13 @@ ngx_http_finalize_request(ngx_http_reque
          return;
      }
  
 +#if (NGX_STATUS)
 +    if (clcf->request_counter) {
++        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "status sub active_request_counter");
 +        ngx_status_fetch_sub(clcf->active_request_counter);
 +    }
 +#endif
@@ -2471,13 +2502,14 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
      if (rc == NGX_OK && r->filter_finalize) {
          c->error = 1;
          return;
-@@ -1894,6 +1902,13 @@ ngx_http_finalize_request(ngx_http_reque
+@@ -1894,6 +1903,14 @@ ngx_http_finalize_request(ngx_http_reque
  
      if (rc == NGX_DECLINED) {
          r->content_handler = NULL;
 +
 +#if (NGX_STATUS)
 +        if (clcf->request_counter) {
++            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "status add active_request_counter");
 +            ngx_status_fetch_add(clcf->active_request_counter);
 +        }
 +#endif
@@ -2485,12 +2517,13 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
          r->write_event_handler = ngx_http_core_run_phases;
          ngx_http_core_run_phases(r);
          return;
-@@ -1942,6 +1957,12 @@ ngx_http_finalize_request(ngx_http_reque
+@@ -1942,6 +1959,13 @@ ngx_http_finalize_request(ngx_http_reque
          c->read->handler = ngx_http_request_handler;
          c->write->handler = ngx_http_request_handler;
  
 +#if (NGX_STATUS)
 +        if (clcf->request_counter) {
++            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "status add active_request_counter");
 +            ngx_status_fetch_add(clcf->active_request_counter);
 +        }
 +#endif
@@ -2498,7 +2531,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
          ngx_http_finalize_request(r, ngx_http_special_response_handler(r, rc));
          return;
      }
-@@ -1973,8 +1994,6 @@ ngx_http_finalize_request(ngx_http_reque
+@@ -1973,8 +1997,6 @@ ngx_http_finalize_request(ngx_http_reque
  
              if (!r->logged) {
  
@@ -2507,7 +2540,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
                  if (clcf->log_subrequest) {
                      ngx_http_log_request(r);
                  }
-@@ -2472,7 +2491,7 @@ ngx_http_set_keepalive(ngx_http_request_
+@@ -2472,7 +2494,7 @@ ngx_http_set_keepalive(ngx_http_request_
  
          ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0, "pipelined request");
  
@@ -2516,7 +2549,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
          (void) ngx_atomic_fetch_add(ngx_stat_reading, 1);
  #endif
  
-@@ -2702,7 +2721,7 @@ ngx_http_keepalive_handler(ngx_event_t *
+@@ -2702,7 +2724,7 @@ ngx_http_keepalive_handler(ngx_event_t *
  
      b->last += n;
  
@@ -2525,7 +2558,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
      (void) ngx_atomic_fetch_add(ngx_stat_reading, 1);
  #endif
  
-@@ -2952,7 +2971,7 @@ ngx_http_free_request(ngx_http_request_t
+@@ -2952,7 +2974,7 @@ ngx_http_free_request(ngx_http_request_t
          }
      }
  
@@ -2534,7 +2567,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
  
      if (r->stat_reading) {
          (void) ngx_atomic_fetch_add(ngx_stat_reading, -1);
-@@ -3039,7 +3058,7 @@ ngx_http_close_connection(ngx_connection
+@@ -3039,7 +3061,7 @@ ngx_http_close_connection(ngx_connection
  
  #endif
  
