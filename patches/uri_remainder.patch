@@ -2,7 +2,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_core_module.c
 +++ nginx-catap/nginx/src/http/ngx_http_core_module.c
-@@ -952,6 +952,14 @@ ngx_http_core_find_config_phase(ngx_http
+@@ -953,6 +953,14 @@ ngx_http_core_find_config_phase(ngx_http
      }
  #endif
  
