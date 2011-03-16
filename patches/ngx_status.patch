@@ -3562,7 +3562,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
      return NGX_OK;
  
  failed:
-@@ -633,9 +705,26 @@ ngx_http_upstream_free_round_robin_peer(
+@@ -633,9 +705,27 @@ ngx_http_upstream_free_round_robin_peer(
      time_t                       now;
      ngx_http_upstream_rr_peer_t  *peer;
  
@@ -3581,7 +3581,8 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
 +
 +    peer = &rrp->peers->peer[rrp->current];
 +
-+    if (peer->status_counters && peer->status_counters[p]) {
++    if (!(state & NGX_PEER_FAILED) && peer &&
++        peer->status_counters && peer->status_counters[p]) {
 +	ngx_status_fetch_add(peer->status_counters[p]);
 +    }
 +#endif
@@ -3589,7 +3590,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
      if (state == 0 && pc->tries == 0) {
          return;
      }
-@@ -657,6 +746,12 @@ ngx_http_upstream_free_round_robin_peer(
+@@ -657,6 +747,12 @@ ngx_http_upstream_free_round_robin_peer(
          peer->fails++;
          peer->accessed = now;
  
@@ -3602,7 +3603,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
          if (peer->max_fails) {
              peer->current_weight -= peer->weight / peer->max_fails;
          }
-@@ -758,3 +853,126 @@ ngx_http_upstream_save_round_robin_peer_
+@@ -758,3 +854,126 @@ ngx_http_upstream_save_round_robin_peer_
  }
  
  #endif
