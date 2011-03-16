@@ -1,0 +1,163 @@
+Index: nginx-catap/nginx/src/http/ngx_http_variables.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_variables.c
++++ nginx-catap/nginx/src/http/ngx_http_variables.c
+@@ -7,6 +7,9 @@
+ #include <ngx_config.h>
+ #include <ngx_core.h>
+ #include <ngx_http.h>
++#if (NGX_HAVE_MD5)
++#include <ngx_md5.h>
++#endif
+ #include <nginx.h>
+ 
+ 
+@@ -33,6 +36,12 @@ static ngx_int_t ngx_http_variable_cooki
+     ngx_http_variable_value_t *v, uintptr_t data);
+ static ngx_int_t ngx_http_variable_argument(ngx_http_request_t *r,
+     ngx_http_variable_value_t *v, uintptr_t data);
++static ngx_int_t ngx_http_variable_crc32(ngx_http_request_t *r,
++    ngx_http_variable_value_t *v, uintptr_t data);
++#if (NGX_HAVE_MD5)
++static ngx_int_t ngx_http_variable_md5(ngx_http_request_t *r,
++    ngx_http_variable_value_t *v, uintptr_t data);
++#endif
+ 
+ static ngx_int_t ngx_http_variable_host(ngx_http_request_t *r,
+     ngx_http_variable_value_t *v, uintptr_t data);
+@@ -537,6 +546,26 @@ ngx_http_get_variable(ngx_http_request_t
+         return NULL;
+     }
+ 
++    if (ngx_strncmp(name->data, "crc32_", 6) == 0) {
++
++        if (ngx_http_variable_crc32(r, vv, (uintptr_t) name) == NGX_OK) {
++            return vv;
++        }
++
++        return NULL;
++    }
++
++#if (NGX_HAVE_MD5)
++    if (ngx_strncmp(name->data, "md5_", 4) == 0) {
++
++        if (ngx_http_variable_md5(r, vv, (uintptr_t) name) == NGX_OK) {
++            return vv;
++        }
++
++        return NULL;
++    }
++#endif
++
+     vv->not_found = 1;
+ 
+     return vv;
+@@ -877,6 +906,108 @@ ngx_http_variable_argument(ngx_http_requ
+ 
+ 
+ static ngx_int_t
++ngx_http_variable_crc32(ngx_http_request_t *r, ngx_http_variable_value_t *v,
++    uintptr_t data)
++{
++    ngx_str_t *name = (ngx_str_t *) data;
++
++    ngx_str_t  sub_name;
++    ngx_uint_t key;
++
++    ngx_http_variable_value_t *vv;
++
++    sub_name.len = name->len - (sizeof("crc32_") - 1);
++    sub_name.data = name->data + sizeof("crc32_") - 1;
++
++    key = ngx_hash_strlow(sub_name.data, sub_name.data, sub_name.len);
++
++    vv = ngx_http_get_variable(r, &sub_name, key);
++
++    if (vv == NULL || !vv->valid) {
++        return NGX_ERROR;
++    }
++
++    if (vv->not_found) {
++        v->not_found = 1;
++        return NGX_OK;
++    }
++
++    v->len = sizeof("3C32515A") - 1;
++
++    v->data = ngx_palloc(r->pool, v->len);
++    if (v->data == NULL) {
++        v->not_found = 1;
++        return NGX_OK;
++    }
++
++    ngx_sprintf(v->data, "%08XD", ngx_crc32_long(vv->data, vv->len));
++
++    v->valid = 1;
++    v->not_found = 0;
++    v->no_cacheable = vv->no_cacheable;
++
++    return NGX_OK;
++}
++
++
++#if (NGX_HAVE_MD5)
++static ngx_int_t
++ngx_http_variable_md5(ngx_http_request_t *r, ngx_http_variable_value_t *v,
++    uintptr_t data)
++{
++    ngx_str_t *name = (ngx_str_t *) data;
++
++    ngx_str_t  sub_name;
++    ngx_uint_t key, i;
++    ngx_md5_t  md5;
++    u_char     hash[16], *p;
++
++    ngx_http_variable_value_t *vv;
++
++    sub_name.len = name->len - (sizeof("md5_") - 1);
++    sub_name.data = name->data + sizeof("md5_") - 1;
++
++    key = ngx_hash_strlow(sub_name.data, sub_name.data, sub_name.len);
++
++    vv = ngx_http_get_variable(r, &sub_name, key);
++
++    if (vv == NULL || !vv->valid) {
++        return NGX_ERROR;
++    }
++
++    if (vv->not_found) {
++        v->not_found = 1;
++        return NGX_OK;
++    }
++
++    v->len = sizeof("7002945D4B8D9E472866092689DB3EAD") - 1;
++
++    v->data = ngx_palloc(r->pool, v->len);
++    if (v->data == NULL) {
++        v->not_found = 1;
++        return NGX_OK;
++    }
++
++    ngx_md5_init(&md5);
++    ngx_md5_update(&md5, vv->data, vv->len);
++    ngx_md5_final((u_char*)hash, &md5);
++
++    p = v->data;
++
++    for (i = 0; i < 16; i++) {
++	p = ngx_sprintf(p, "%02XD", hash[i]);
++    }
++
++    v->valid = 1;
++    v->not_found = 0;
++    v->no_cacheable = vv->no_cacheable;
++
++    return NGX_OK;
++}
++#endif
++
++
++static ngx_int_t
+ ngx_http_variable_host(ngx_http_request_t *r, ngx_http_variable_value_t *v,
+     uintptr_t data)
+ {
