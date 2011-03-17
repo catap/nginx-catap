@@ -2,30 +2,26 @@ Index: nginx-catap/nginx/src/http/ngx_http_variables.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_variables.c
 +++ nginx-catap/nginx/src/http/ngx_http_variables.c
-@@ -7,6 +7,9 @@
+@@ -7,6 +7,7 @@
  #include <ngx_config.h>
  #include <ngx_core.h>
  #include <ngx_http.h>
-+#if (NGX_HAVE_MD5)
 +#include <ngx_md5.h>
-+#endif
  #include <nginx.h>
  
  
-@@ -33,6 +36,12 @@ static ngx_int_t ngx_http_variable_cooki
+@@ -33,6 +34,10 @@ static ngx_int_t ngx_http_variable_cooki
      ngx_http_variable_value_t *v, uintptr_t data);
  static ngx_int_t ngx_http_variable_argument(ngx_http_request_t *r,
      ngx_http_variable_value_t *v, uintptr_t data);
 +static ngx_int_t ngx_http_variable_crc32(ngx_http_request_t *r,
 +    ngx_http_variable_value_t *v, uintptr_t data);
-+#if (NGX_HAVE_MD5)
 +static ngx_int_t ngx_http_variable_md5(ngx_http_request_t *r,
 +    ngx_http_variable_value_t *v, uintptr_t data);
-+#endif
  
  static ngx_int_t ngx_http_variable_host(ngx_http_request_t *r,
      ngx_http_variable_value_t *v, uintptr_t data);
-@@ -537,6 +546,26 @@ ngx_http_get_variable(ngx_http_request_t
+@@ -537,6 +542,24 @@ ngx_http_get_variable(ngx_http_request_t
          return NULL;
      }
  
@@ -38,7 +34,6 @@ Index: nginx-catap/nginx/src/http/ngx_http_variables.c
 +        return NULL;
 +    }
 +
-+#if (NGX_HAVE_MD5)
 +    if (ngx_strncmp(name->data, "md5_", 4) == 0) {
 +
 +        if (ngx_http_variable_md5(r, vv, (uintptr_t) name) == NGX_OK) {
@@ -47,12 +42,11 @@ Index: nginx-catap/nginx/src/http/ngx_http_variables.c
 +
 +        return NULL;
 +    }
-+#endif
 +
      vv->not_found = 1;
  
      return vv;
-@@ -877,6 +906,108 @@ ngx_http_variable_argument(ngx_http_requ
+@@ -877,6 +900,106 @@ ngx_http_variable_argument(ngx_http_requ
  
  
  static ngx_int_t
@@ -100,7 +94,6 @@ Index: nginx-catap/nginx/src/http/ngx_http_variables.c
 +}
 +
 +
-+#if (NGX_HAVE_MD5)
 +static ngx_int_t
 +ngx_http_variable_md5(ngx_http_request_t *r, ngx_http_variable_value_t *v,
 +    uintptr_t data)
@@ -154,10 +147,43 @@ Index: nginx-catap/nginx/src/http/ngx_http_variables.c
 +
 +    return NGX_OK;
 +}
-+#endif
 +
 +
 +static ngx_int_t
  ngx_http_variable_host(ngx_http_request_t *r, ngx_http_variable_value_t *v,
      uintptr_t data)
  {
+@@ -2013,6 +2136,20 @@ ngx_http_variables_init_vars(ngx_conf_t 
+             continue;
+         }
+ 
++        if (ngx_strncmp(v[i].name.data, "crc32_", 6) == 0) {
++            v[i].get_handler = ngx_http_variable_crc32;
++            v[i].data = (uintptr_t) &v[i].name;
++
++            continue;
++        }
++
++        if (ngx_strncmp(v[i].name.data, "md5_", 4) == 0) {
++            v[i].get_handler = ngx_http_variable_md5;
++            v[i].data = (uintptr_t) &v[i].name;
++
++            continue;
++        }
++
+         ngx_log_error(NGX_LOG_EMERG, cf->log, 0,
+                       "unknown \"%V\" variable", &v[i].name);
+ 
+Index: nginx-catap/nginx/auto/options
+===================================================================
+--- nginx-catap.orig/nginx/auto/options
++++ nginx-catap/nginx/auto/options
+@@ -114,7 +114,7 @@ PCRE_OPT=
+ USE_OPENSSL=NO
+ OPENSSL=NONE
+ 
+-USE_MD5=NO
++USE_MD5=YES
+ MD5=NONE
+ MD5_OPT=
+ MD5_ASM=NO
