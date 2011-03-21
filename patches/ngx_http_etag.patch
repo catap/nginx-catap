@@ -364,7 +364,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_special_response.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_special_response.c
 +++ nginx-catap/nginx/src/http/ngx_http_special_response.c
-@@ -639,6 +639,7 @@ ngx_http_send_special_response(ngx_http_
+@@ -646,6 +646,7 @@ ngx_http_send_special_response(ngx_http_
  
      ngx_http_clear_accept_ranges(r);
      ngx_http_clear_last_modified(r);
@@ -372,7 +372,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_special_response.c
  
      rc = ngx_http_send_header(r);
  
-@@ -737,6 +738,7 @@ ngx_http_send_refresh(ngx_http_request_t
+@@ -744,6 +745,7 @@ ngx_http_send_refresh(ngx_http_request_t
  
      ngx_http_clear_accept_ranges(r);
      ngx_http_clear_last_modified(r);

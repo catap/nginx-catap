@@ -153,7 +153,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_variables.c
  ngx_http_variable_host(ngx_http_request_t *r, ngx_http_variable_value_t *v,
      uintptr_t data)
  {
-@@ -2013,6 +2136,20 @@ ngx_http_variables_init_vars(ngx_conf_t 
+@@ -2057,6 +2180,20 @@ ngx_http_variables_init_vars(ngx_conf_t 
              continue;
          }
  
