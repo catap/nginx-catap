@@ -10,3 +10,4 @@ uri_remainder.patch
 ngx_http_status_heap.patch
 ngx_http_upstream_count_limit.patch
 generic-variables-crc32_-and-md5.patch
+ngx_http_empty_gif_size.patch

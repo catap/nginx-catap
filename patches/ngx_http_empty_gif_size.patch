@@ -1,0 +1,294 @@
+Index: nginx-catap/nginx/src/http/modules/ngx_http_empty_gif_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_empty_gif_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_empty_gif_module.c
+@@ -8,9 +8,27 @@
+ #include <ngx_http.h>
+ 
+ 
++typedef struct {
++    size_t     size;
++    ngx_str_t  str;
++} ngx_http_empty_gif_fake_t;
++
++typedef struct {
++    ngx_http_empty_gif_fake_t fake;
++} ngx_http_empty_gif_loc_conf_t;
++
++
+ static char *ngx_http_empty_gif(ngx_conf_t *cf, ngx_command_t *cmd,
+     void *conf);
+ 
++static void *ngx_http_empty_gif_create_local_conf(ngx_conf_t *cf);
++static char *ngx_http_empty_gif_merge_local_conf(ngx_conf_t *cf,
++    void *parent, void *child);
++
++static char *ngx_http_empty_gif_size(ngx_conf_t *cf,
++    ngx_command_t *cmd, void *conf);
++
++
+ static ngx_command_t  ngx_http_empty_gif_commands[] = {
+ 
+     { ngx_string("empty_gif"),
+@@ -20,6 +38,14 @@ static ngx_command_t  ngx_http_empty_gif
+       0,
+       NULL },
+ 
++    { ngx_string("empty_gif_size"),
++      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LIF_CONF
++                        |NGX_CONF_TAKE12,
++      ngx_http_empty_gif_size,
++      NGX_HTTP_LOC_CONF_OFFSET,
++      offsetof(ngx_http_empty_gif_loc_conf_t, fake),
++      NULL },
++
+       ngx_null_command
+ };
+ 
+@@ -75,32 +101,32 @@ static u_char  ngx_empty_gif[] = {
+ 
+ 
+ static ngx_http_module_t  ngx_http_empty_gif_module_ctx = {
+-    NULL,                          /* preconfiguration */
+-    NULL,                          /* postconfiguration */
++    NULL,                                  /* preconfiguration */
++    NULL,                                  /* postconfiguration */
+ 
+-    NULL,                          /* create main configuration */
+-    NULL,                          /* init main configuration */
++    NULL,                                  /* create main configuration */
++    NULL,                                  /* init main configuration */
+ 
+-    NULL,                          /* create server configuration */
+-    NULL,                          /* merge server configuration */
++    NULL,                                  /* create server configuration */
++    NULL,                                  /* merge server configuration */
+ 
+-    NULL,                          /* create location configuration */
+-    NULL                           /* merge location configuration */
++    ngx_http_empty_gif_create_local_conf,  /* create location configuration */
++    ngx_http_empty_gif_merge_local_conf    /* merge location configuration */
+ };
+ 
+ 
+ ngx_module_t  ngx_http_empty_gif_module = {
+     NGX_MODULE_V1,
+-    &ngx_http_empty_gif_module_ctx, /* module context */
+-    ngx_http_empty_gif_commands,   /* module directives */
+-    NGX_HTTP_MODULE,               /* module type */
+-    NULL,                          /* init master */
+-    NULL,                          /* init module */
+-    NULL,                          /* init process */
+-    NULL,                          /* init thread */
+-    NULL,                          /* exit thread */
+-    NULL,                          /* exit process */
+-    NULL,                          /* exit master */
++    &ngx_http_empty_gif_module_ctx,   /* module context */
++    ngx_http_empty_gif_commands,      /* module directives */
++    NGX_HTTP_MODULE,                  /* module type */
++    NULL,                             /* init master */
++    NULL,                             /* init module */
++    NULL,                             /* init process */
++    NULL,                             /* init thread */
++    NULL,                             /* exit thread */
++    NULL,                             /* exit process */
++    NULL,                             /* exit master */
+     NGX_MODULE_V1_PADDING
+ };
+ 
+@@ -111,8 +137,14 @@ static ngx_str_t  ngx_http_gif_type = ng
+ static ngx_int_t
+ ngx_http_empty_gif_handler(ngx_http_request_t *r)
+ {
+-    ngx_int_t                 rc;
+-    ngx_http_complex_value_t  cv;
++    ngx_int_t                       rc;
++    ngx_buf_t                      *b;
++    ngx_uint_t                      i, out_count;
++    ngx_chain_t                    *out;
++    ngx_http_complex_value_t        cv;
++    ngx_http_empty_gif_loc_conf_t  *conf;
++
++    conf = ngx_http_get_module_loc_conf(r, ngx_http_empty_gif_module);
+ 
+     if (!(r->method & (NGX_HTTP_GET|NGX_HTTP_HEAD))) {
+         return NGX_HTTP_NOT_ALLOWED;
+@@ -124,6 +156,10 @@ ngx_http_empty_gif_handler(ngx_http_requ
+         return rc;
+     }
+ 
++    if (conf->fake.size) {
++        goto fake;
++    }
++
+     ngx_memzero(&cv, sizeof(ngx_http_complex_value_t));
+ 
+     cv.value.len = sizeof(ngx_empty_gif);
+@@ -135,6 +171,79 @@ ngx_http_empty_gif_handler(ngx_http_requ
+     r->headers_out.etag_uniq = 6535;
+ 
+     return ngx_http_send_response(r, NGX_HTTP_OK, &ngx_http_gif_type, &cv);
++
++fake:
++    r->headers_out.content_type_len = ngx_http_gif_type.len;
++    ngx_str_set(&r->headers_out.content_type, ngx_http_gif_type.data);
++
++    if (r->method == NGX_HTTP_HEAD) {
++        r->headers_out.status = NGX_HTTP_OK;
++        r->headers_out.content_length_n = sizeof(ngx_empty_gif);
++        r->headers_out.content_length_n += conf->fake.size;
++        r->headers_out.last_modified_time = 23349600;
++
++        r->headers_out.etag_size = 40;
++        r->headers_out.etag_time = 5;
++        r->headers_out.etag_uniq = 6535;
++
++        return ngx_http_send_header(r);
++    }
++
++    out_count = 1;
++    out_count += conf->fake.size / conf->fake.str.len;
++    if (conf->fake.size % conf->fake.str.len) {
++        out_count++;
++    }
++
++    out = ngx_palloc(r->pool, sizeof(ngx_chain_t) * out_count);
++    if (out == NULL) {
++        return NGX_HTTP_INTERNAL_SERVER_ERROR;
++    }
++
++    for (i = 0; i < out_count; i++) {
++        b = ngx_pcalloc(r->pool, sizeof(ngx_buf_t));
++        if (b == NULL) {
++            return NGX_HTTP_INTERNAL_SERVER_ERROR;
++        }
++
++        out[i].buf = b;
++
++        if (0 == i) {
++            out[i].next = NULL;
++            b->pos = b->start = ngx_empty_gif;
++            b->last = b->end = ngx_empty_gif + sizeof(ngx_empty_gif);
++        } else if ((conf->fake.size / conf->fake.str.len) + 1 == i) {
++            out[i-1].next = &out[i];
++            out[i].next = NULL;
++            b->pos = b->start = conf->fake.str.data;
++            b->last = b->end = conf->fake.str.data + conf->fake.size % conf->fake.str.len;
++        } else {
++            out[i-1].next = &out[i];
++            out[i].next = NULL;
++            b->pos = b->start = conf->fake.str.data;
++            b->last = b->end = conf->fake.str.data + conf->fake.str.len;
++        }
++
++        b->memory = 1;
++    }
++
++    r->headers_out.status = NGX_HTTP_OK;
++    r->headers_out.content_length_n = sizeof(ngx_empty_gif) + conf->fake.size;
++    r->headers_out.last_modified_time = 23349600;
++
++    b->last_buf = 1;
++
++    r->headers_out.etag_size = 40;
++    r->headers_out.etag_time = 5;
++    r->headers_out.etag_uniq = 6535;
++
++    rc = ngx_http_send_header(r);
++
++    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
++        return rc;
++    }
++
++    return ngx_http_output_filter(r, out);
+ }
+ 
+ 
+@@ -148,3 +257,87 @@ ngx_http_empty_gif(ngx_conf_t *cf, ngx_c
+ 
+     return NGX_CONF_OK;
+ }
++
++
++static void *
++ngx_http_empty_gif_create_local_conf(ngx_conf_t *cf)
++{
++    ngx_http_empty_gif_loc_conf_t  *conf;
++
++    conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_empty_gif_loc_conf_t));
++    if (conf == NULL) {
++        return NGX_CONF_ERROR;
++    }
++
++    return conf;
++}
++
++static char *
++ngx_http_empty_gif_merge_local_conf(ngx_conf_t *cf, void *parent, void *child)
++{
++    ngx_http_empty_gif_loc_conf_t  *prev = parent;
++    ngx_http_empty_gif_loc_conf_t  *conf = child;
++
++    if (prev->fake.size) {
++        conf->fake = prev->fake;
++    }
++
++    return NGX_CONF_OK;
++}
++
++static char *
++ngx_http_empty_gif_size(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
++{
++    char  *p = conf;
++
++    ngx_str_t                 *value;
++    ngx_int_t                  i = 1;
++    ngx_conf_post_t           *post;
++    ngx_http_empty_gif_fake_t *field;
++
++    field = (ngx_http_empty_gif_fake_t *) (p + cmd->offset);
++
++    if (field->str.data) {
++        return "is duplicate";
++    }
++
++    value = cf->args->elts;
++
++    if (cf->args->nelts == 3) {
++        field->str.len = ngx_parse_size(&value[i]);
++        if (field->str.len == (size_t) NGX_ERROR) {
++            return "invalid value";
++        }
++        i++;
++    } else {
++        field->str.len = 1024;
++    }
++
++    field->size = ngx_parse_size(&value[i]);
++
++    if (field->size == (size_t) NGX_ERROR) {
++        return "invalid value";
++    }
++
++    if (field->size < sizeof(ngx_empty_gif)) {
++        return "is shortly";
++    }
++
++    field->size -= sizeof(ngx_empty_gif);
++
++    if (field->str.len > field->size) {
++        field->str.len = field->size;
++    }
++
++    field->str.data = ngx_pcalloc(cf->pool, field->str.len);
++    if (field->str.data == NULL) {
++        return NGX_CONF_ERROR;
++    }
++
++    if (cmd->post) {
++        post = cmd->post;
++        return post->post_handler(cf, post, field);
++    }
++
++    return NGX_CONF_OK;
++}
