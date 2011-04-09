@@ -1,0 +1,287 @@
+Index: nginx-catap/nginx/src/http/modules/ngx_http_rewrite_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_rewrite_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_rewrite_module.c
+@@ -729,6 +729,72 @@ ngx_http_rewrite_if_condition(ngx_conf_t
+             return NGX_CONF_OK;
+         }
+ 
++        if (len == 1 && p[0] == '>') {
++
++            if (ngx_http_rewrite_value(cf, lcf, &value[last]) != NGX_CONF_OK) {
++                return NGX_CONF_ERROR;
++            }
++
++            code = ngx_http_script_start_code(cf->pool, &lcf->codes,
++                                              sizeof(uintptr_t));
++            if (code == NULL) {
++                return NGX_CONF_ERROR;
++            }
++
++            *code = ngx_http_script_more_code;
++
++            return NGX_CONF_OK;
++        }
++
++        if (len == 2 && p[0] == '!' && p[1] == '>') {
++
++            if (ngx_http_rewrite_value(cf, lcf, &value[last]) != NGX_CONF_OK) {
++                return NGX_CONF_ERROR;
++            }
++
++            code = ngx_http_script_start_code(cf->pool, &lcf->codes,
++                                              sizeof(uintptr_t));
++            if (code == NULL) {
++                return NGX_CONF_ERROR;
++            }
++
++            *code = ngx_http_script_not_more_code;
++            return NGX_CONF_OK;
++        }
++
++        if (len == 1 && p[0] == '<') {
++
++            if (ngx_http_rewrite_value(cf, lcf, &value[last]) != NGX_CONF_OK) {
++                return NGX_CONF_ERROR;
++            }
++
++            code = ngx_http_script_start_code(cf->pool, &lcf->codes,
++                                              sizeof(uintptr_t));
++            if (code == NULL) {
++                return NGX_CONF_ERROR;
++            }
++
++            *code = ngx_http_script_less_code;
++
++            return NGX_CONF_OK;
++        }
++
++        if (len == 2 && p[0] == '!' && p[1] == '<') {
++
++            if (ngx_http_rewrite_value(cf, lcf, &value[last]) != NGX_CONF_OK) {
++                return NGX_CONF_ERROR;
++            }
++
++            code = ngx_http_script_start_code(cf->pool, &lcf->codes,
++                                              sizeof(uintptr_t));
++            if (code == NULL) {
++                return NGX_CONF_ERROR;
++            }
++
++            *code = ngx_http_script_not_less_code;
++            return NGX_CONF_OK;
++        }
++
+         if ((len == 1 && p[0] == '~')
+             || (len == 2 && p[0] == '~' && p[1] == '*')
+             || (len == 2 && p[0] == '!' && p[1] == '~')
+Index: nginx-catap/nginx/src/http/ngx_http_script.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_script.c
++++ nginx-catap/nginx/src/http/ngx_http_script.c
+@@ -1469,6 +1469,190 @@ ngx_http_script_not_equal_code(ngx_http_
+ 
+ 
+ void
++ngx_http_script_more_code(ngx_http_script_engine_t *e)
++{
++    ngx_int_t    v, r;
++
++    ngx_http_variable_value_t  *val, *res;
++
++    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, e->request->connection->log, 0,
++                   "http script more");
++
++    e->sp--;
++    val = e->sp;
++    res = e->sp - 1;
++
++    e->ip += sizeof(uintptr_t);
++
++    v = ngx_atoi(val->data, val->len);
++    if (v == NGX_ERROR) {
++        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, e->request->connection->log, 0,
++                      "http script more: val isn't number");
++
++        *res = ngx_http_variable_null_value;
++        return;
++    }
++
++    r = ngx_atoi(res->data, res->len);
++    if (r == NGX_ERROR) {
++        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, e->request->connection->log, 0,
++                      "http script more: res isn't number");
++
++        *res = ngx_http_variable_null_value;
++        return;
++    }
++
++    if (r > v) {
++        *res = ngx_http_variable_true_value;
++        return;
++    }
++
++    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, e->request->connection->log, 0,
++                   "http script more: no");
++
++    *res = ngx_http_variable_null_value;
++}
++
++
++void
++ngx_http_script_not_more_code(ngx_http_script_engine_t *e)
++{
++    ngx_int_t    v, r;
++
++    ngx_http_variable_value_t  *val, *res;
++
++    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, e->request->connection->log, 0,
++                   "http script not more");
++
++    e->sp--;
++    val = e->sp;
++    res = e->sp - 1;
++
++    e->ip += sizeof(uintptr_t);
++
++    v = ngx_atoi(val->data, val->len);
++    if (v == NGX_ERROR) {
++        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, e->request->connection->log, 0,
++                      "http script not more: val isn't number");
++
++        *res = ngx_http_variable_null_value;
++        return;
++    }
++
++    r = ngx_atoi(res->data, res->len);
++    if (r == NGX_ERROR) {
++        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, e->request->connection->log, 0,
++                      "http script more: res isn't number");
++
++        *res = ngx_http_variable_null_value;
++        return;
++    }
++
++    if (!(r > v)) {
++        *res = ngx_http_variable_true_value;
++        return;
++    }
++
++    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, e->request->connection->log, 0,
++                   "http script not more: no");
++
++    *res = ngx_http_variable_true_value;
++}
++
++
++void
++ngx_http_script_less_code(ngx_http_script_engine_t *e)
++{
++    ngx_int_t    v, r;
++
++    ngx_http_variable_value_t  *val, *res;
++
++    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, e->request->connection->log, 0,
++                   "http script less");
++
++    e->sp--;
++    val = e->sp;
++    res = e->sp - 1;
++
++    e->ip += sizeof(uintptr_t);
++
++    v = ngx_atoi(val->data, val->len);
++    if (v == NGX_ERROR) {
++        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, e->request->connection->log, 0,
++                      "http script less: val isn't number");
++
++        *res = ngx_http_variable_null_value;
++        return;
++    }
++
++    r = ngx_atoi(res->data, res->len);
++    if (r == NGX_ERROR) {
++        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, e->request->connection->log, 0,
++                      "http script less: res isn't number");
++
++        *res = ngx_http_variable_null_value;
++        return;
++    }
++
++    if (r < v) {
++        *res = ngx_http_variable_true_value;
++        return;
++    }
++
++    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, e->request->connection->log, 0,
++                   "http script less: no");
++
++    *res = ngx_http_variable_null_value;
++}
++
++
++void
++ngx_http_script_not_less_code(ngx_http_script_engine_t *e)
++{
++    ngx_int_t    v, r;
++
++    ngx_http_variable_value_t  *val, *res;
++
++    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, e->request->connection->log, 0,
++                   "http script not less");
++
++    e->sp--;
++    val = e->sp;
++    res = e->sp - 1;
++
++    e->ip += sizeof(uintptr_t);
++
++    v = ngx_atoi(val->data, val->len);
++    if (v == NGX_ERROR) {
++        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, e->request->connection->log, 0,
++                      "http script not less: val isn't number");
++
++        *res = ngx_http_variable_null_value;
++        return;
++    }
++
++    r = ngx_atoi(res->data, res->len);
++    if (r == NGX_ERROR) {
++        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, e->request->connection->log, 0,
++                      "http script less: res isn't number");
++
++        *res = ngx_http_variable_null_value;
++        return;
++    }
++
++    if (!(r < v)) {
++        *res = ngx_http_variable_true_value;
++        return;
++    }
++
++    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, e->request->connection->log, 0,
++                   "http script not less: no");
++
++    *res = ngx_http_variable_null_value;
++}
++
++
++void
+ ngx_http_script_file_code(ngx_http_script_engine_t *e)
+ {
+     ngx_str_t                     path;
+Index: nginx-catap/nginx/src/http/ngx_http_script.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_script.h
++++ nginx-catap/nginx/src/http/ngx_http_script.h
+@@ -244,6 +244,10 @@ void ngx_http_script_break_code(ngx_http
+ void ngx_http_script_if_code(ngx_http_script_engine_t *e);
+ void ngx_http_script_equal_code(ngx_http_script_engine_t *e);
+ void ngx_http_script_not_equal_code(ngx_http_script_engine_t *e);
++void ngx_http_script_more_code(ngx_http_script_engine_t *e);
++void ngx_http_script_not_more_code(ngx_http_script_engine_t *e);
++void ngx_http_script_less_code(ngx_http_script_engine_t *e);
++void ngx_http_script_not_less_code(ngx_http_script_engine_t *e);
+ void ngx_http_script_file_code(ngx_http_script_engine_t *e);
+ void ngx_http_script_complex_value_code(ngx_http_script_engine_t *e);
+ void ngx_http_script_value_code(ngx_http_script_engine_t *e);
