@@ -2635,7 +2635,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/modules/ngx_http_proxy_module.c
 +++ nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
-@@ -2642,6 +2642,168 @@ ngx_http_proxy_store(ngx_conf_t *cf, ngx
+@@ -2676,6 +2676,168 @@ ngx_http_proxy_cache(ngx_conf_t *cf, ngx
          return NGX_CONF_ERROR;
      }
  
