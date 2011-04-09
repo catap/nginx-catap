@@ -1,0 +1,217 @@
+Index: nginx-catap/nginx/auto/os/features
+===================================================================
+--- nginx-catap.orig/nginx/auto/os/features
++++ nginx-catap/nginx/auto/os/features
+@@ -361,3 +361,24 @@ END
+         fi
+     fi
+ fi
++
++
++ngx_feature="sysinfo()"
++ngx_feature_name="NGX_HAVE_SYSINFO"
++ngx_feature_run=no
++ngx_feature_incs="#include <sys/sysinfo.h>"
++ngx_feature_path=
++ngx_feature_libs=
++ngx_feature_test="struct sysinfo s;
++                  sysinfo(&s);"
++. auto/feature
++
++ngx_feature="getloadavg()"
++ngx_feature_name="NGX_HAVE_GETLOADAVG"
++ngx_feature_run=no
++ngx_feature_incs="#include <stdlib.h>"
++ngx_feature_path=
++ngx_feature_libs=
++ngx_feature_test="double loadavg[1];
++                  getloadavg(loadavg, 1);"
++. auto/feature
+Index: nginx-catap/nginx/src/http/ngx_http_variables.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_variables.c
++++ nginx-catap/nginx/src/http/ngx_http_variables.c
+@@ -92,6 +92,12 @@ static ngx_int_t ngx_http_variable_sent_
+     ngx_http_variable_value_t *v, uintptr_t data);
+ static ngx_int_t ngx_http_variable_sent_transfer_encoding(ngx_http_request_t *r,
+     ngx_http_variable_value_t *v, uintptr_t data);
++static ngx_int_t ngx_http_variable_loadavg_1m(ngx_http_request_t *r,
++    ngx_http_variable_value_t *v, uintptr_t data);
++static ngx_int_t ngx_http_variable_loadavg_5m(ngx_http_request_t *r,
++    ngx_http_variable_value_t *v, uintptr_t data);
++static ngx_int_t ngx_http_variable_loadavg_15m(ngx_http_request_t *r,
++    ngx_http_variable_value_t *v, uintptr_t data);
+ 
+ static ngx_int_t ngx_http_variable_nginx_version(ngx_http_request_t *r,
+     ngx_http_variable_value_t *v, uintptr_t data);
+@@ -278,6 +284,15 @@ static ngx_http_variable_t  ngx_http_cor
+     { ngx_string("mstimestamp"), NULL, ngx_http_variable_mstimestamp,
+       0, 0, 0 },
+ 
++    { ngx_string("loadavg_1m"), NULL, ngx_http_variable_loadavg_1m,
++      0, 0, 0 },
++
++    { ngx_string("loadavg_5m"), NULL, ngx_http_variable_loadavg_5m,
++      0, 0, 0 },
++
++    { ngx_string("loadavg_15m"), NULL, ngx_http_variable_loadavg_15m,
++      0, 0, 0 },
++
+     { ngx_null_string, NULL, NULL, 0, 0, 0 }
+ };
+ 
+@@ -1831,7 +1846,7 @@ ngx_http_variable_pid(ngx_http_request_t
+ {
+     u_char  *p;
+ 
+-    p = ngx_pnalloc(r->pool, NGX_INT64_LEN);
++    p = ngx_pnalloc(r->pool, NGX_INT_T_LEN);
+     if (p == NULL) {
+         return NGX_ERROR;
+     }
+@@ -2086,6 +2101,87 @@ ngx_http_variable_mstimestamp(ngx_http_r
+ }
+ 
+ 
++static ngx_int_t
++ngx_http_variable_loadavg_1m(ngx_http_request_t *r,
++    ngx_http_variable_value_t *v, uintptr_t data)
++{
++    u_char    *p;
++    ngx_int_t  la;
++
++    p = ngx_pnalloc(r->pool, NGX_INT64_LEN);
++    if (p == NULL) {
++        return NGX_ERROR;
++    }
++
++    la = ngx_get_loadavg(0);
++    if (la == NGX_ERROR) {
++        return NGX_ERROR;
++    }
++
++    v->len = ngx_sprintf(p, "%i", la) - p;
++    v->valid = 1;
++    v->no_cacheable = 1;
++    v->not_found = 0;
++    v->data = p;
++
++    return NGX_OK;
++}
++
++
++static ngx_int_t
++ngx_http_variable_loadavg_5m(ngx_http_request_t *r,
++    ngx_http_variable_value_t *v, uintptr_t data)
++{
++    u_char    *p;
++    ngx_int_t  la;
++
++    p = ngx_pnalloc(r->pool, NGX_INT_T_LEN);
++    if (p == NULL) {
++        return NGX_ERROR;
++    }
++
++    la = ngx_get_loadavg(1);
++    if (la == NGX_ERROR) {
++        return NGX_ERROR;
++    }
++
++    v->len = ngx_sprintf(p, "%i", la) - p;
++    v->valid = 1;
++    v->no_cacheable = 1;
++    v->not_found = 0;
++    v->data = p;
++
++    return NGX_OK;
++}
++
++
++static ngx_int_t
++ngx_http_variable_loadavg_15m(ngx_http_request_t *r,
++    ngx_http_variable_value_t *v, uintptr_t data)
++{
++    u_char    *p;
++    ngx_int_t  la;
++
++    p = ngx_pnalloc(r->pool, NGX_INT_T_LEN);
++    if (p == NULL) {
++        return NGX_ERROR;
++    }
++
++    la = ngx_get_loadavg(2);
++    if (la == NGX_ERROR) {
++        return NGX_ERROR;
++    }
++
++    v->len = ngx_sprintf(p, "%i", la) - p;
++    v->valid = 1;
++    v->no_cacheable = 1;
++    v->not_found = 0;
++    v->data = p;
++
++    return NGX_OK;
++}
++
++
+ ngx_int_t
+ ngx_http_variables_add_core_vars(ngx_conf_t *cf)
+ {
+Index: nginx-catap/nginx/src/os/unix/ngx_user.c
+===================================================================
+--- nginx-catap.orig/nginx/src/os/unix/ngx_user.c
++++ nginx-catap/nginx/src/os/unix/ngx_user.c
+@@ -7,6 +7,9 @@
+ #include <ngx_config.h>
+ #include <ngx_core.h>
+ 
++#if (NGX_HAVE_SYSINFO)
++#include <sys/sysinfo.h>
++#endif
+ 
+ /*
+  * Solaris has thread-safe crypt()
+@@ -106,3 +109,32 @@ ngx_crypt(ngx_pool_t *pool, u_char *key,
+ #endif
+ 
+ #endif /* NGX_CRYPT */
++
++
++ngx_int_t ngx_get_loadavg(ngx_uint_t n)
++{
++#if (NGX_HAVE_SYSINFO)
++    struct sysinfo s;
++
++    if (sysinfo(&s)) {
++	goto error;
++    }
++
++    return s.loads[n]/65536;
++
++#endif /* NGX_HAVE_SYSINFO */
++
++#if (NGX_HAVE_GETLOADAVG)
++    double loadavg[1];
++
++    if (getloadavg(loadavg, 1) == -1) {
++	goto error;
++    }
++
++    return (int)loadavg[n];
++
++#endif /* NGX_HAVE_SYSINFO */
++
++error:
++    return NGX_ERROR;
++}
+Index: nginx-catap/nginx/src/os/unix/ngx_user.h
+===================================================================
+--- nginx-catap.orig/nginx/src/os/unix/ngx_user.h
++++ nginx-catap/nginx/src/os/unix/ngx_user.h
+@@ -19,5 +19,6 @@ typedef gid_t  ngx_gid_t;
+ ngx_int_t ngx_crypt(ngx_pool_t *pool, u_char *key, u_char *salt,
+     u_char **encrypted);
+ 
++ngx_int_t ngx_get_loadavg(ngx_uint_t n);
+ 
+ #endif /* _NGX_USER_H_INCLUDED_ */
