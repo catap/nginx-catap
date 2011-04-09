@@ -1,0 +1,51 @@
+Index: nginx-catap/nginx/src/http/ngx_http_variables.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_variables.c
++++ nginx-catap/nginx/src/http/ngx_http_variables.c
+@@ -101,6 +101,8 @@ static ngx_int_t ngx_http_variable_pid(n
+     ngx_http_variable_value_t *v, uintptr_t data);
+ static ngx_int_t ngx_http_variable_timestamp(ngx_http_request_t *r,
+     ngx_http_variable_value_t *v, uintptr_t data);
++static ngx_int_t ngx_http_variable_mstimestamp(ngx_http_request_t *r,
++    ngx_http_variable_value_t *v, uintptr_t data);
+ 
+ /*
+  * TODO:
+@@ -273,6 +275,9 @@ static ngx_http_variable_t  ngx_http_cor
+     { ngx_string("timestamp"), NULL, ngx_http_variable_timestamp,
+       0, 0, 0 },
+ 
++    { ngx_string("mstimestamp"), NULL, ngx_http_variable_mstimestamp,
++      0, 0, 0 },
++
+     { ngx_null_string, NULL, NULL, 0, 0, 0 }
+ };
+ 
+@@ -2060,6 +2065,27 @@ ngx_http_regex_exec(ngx_http_request_t *
+ #endif
+ 
+ 
++static ngx_int_t
++ngx_http_variable_mstimestamp(ngx_http_request_t *r,
++    ngx_http_variable_value_t *v, uintptr_t data)
++{
++    u_char  *p;
++
++    p = ngx_pnalloc(r->pool, NGX_INT64_LEN + sizeof("123") - 1);
++    if (p == NULL) {
++        return NGX_ERROR;
++    }
++
++    v->len = ngx_sprintf(p, "%T%03M", ngx_time(), (ngx_timeofday())->msec) - p;
++    v->valid = 1;
++    v->no_cacheable = 0;
++    v->not_found = 0;
++    v->data = p;
++
++    return NGX_OK;
++}
++
++
+ ngx_int_t
+ ngx_http_variables_add_core_vars(ngx_conf_t *cf)
+ {
