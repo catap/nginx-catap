@@ -2549,7 +2549,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
          (void) ngx_atomic_fetch_add(ngx_stat_reading, 1);
  #endif
  
-@@ -2702,7 +2724,7 @@ ngx_http_keepalive_handler(ngx_event_t *
+@@ -2703,7 +2725,7 @@ ngx_http_keepalive_handler(ngx_event_t *
  
      b->last += n;
  
@@ -2558,7 +2558,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
      (void) ngx_atomic_fetch_add(ngx_stat_reading, 1);
  #endif
  
-@@ -2952,7 +2974,7 @@ ngx_http_free_request(ngx_http_request_t
+@@ -2954,7 +2976,7 @@ ngx_http_free_request(ngx_http_request_t
          }
      }
  
@@ -2567,7 +2567,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
  
      if (r->stat_reading) {
          (void) ngx_atomic_fetch_add(ngx_stat_reading, -1);
-@@ -3039,7 +3061,7 @@ ngx_http_close_connection(ngx_connection
+@@ -3041,7 +3063,7 @@ ngx_http_close_connection(ngx_connection
  
  #endif
  
@@ -2864,7 +2864,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
      u->store = (u->conf->store || u->conf->store_lengths);
  
      if (!u->store && !r->post_action && !u->conf->ignore_client_abort) {
-@@ -3961,7 +3989,6 @@ ngx_http_upstream(ngx_conf_t *cf, ngx_co
+@@ -3969,7 +3997,6 @@ ngx_http_upstream(ngx_conf_t *cf, ngx_co
          return NGX_CONF_ERROR;
      }
  
@@ -2872,7 +2872,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
      ctx = ngx_pcalloc(cf->pool, sizeof(ngx_http_conf_ctx_t));
      if (ctx == NULL) {
          return NGX_CONF_ERROR;
-@@ -4015,7 +4042,6 @@ ngx_http_upstream(ngx_conf_t *cf, ngx_co
+@@ -4023,7 +4050,6 @@ ngx_http_upstream(ngx_conf_t *cf, ngx_co
          }
      }
  
@@ -2880,7 +2880,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
      /* parse inside upstream{} */
  
      pcf = *cf;
-@@ -4436,6 +4462,37 @@ ngx_http_upstream_hide_headers_hash(ngx_
+@@ -4444,6 +4470,37 @@ ngx_http_upstream_hide_headers_hash(ngx_
  }
  
  
@@ -2922,7 +2922,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/modules/ngx_http_fastcgi_module.c
 +++ nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
-@@ -2801,6 +2801,168 @@ ngx_http_fastcgi_cache(ngx_conf_t *cf, n
+@@ -2796,6 +2796,168 @@ ngx_http_fastcgi_cache(ngx_conf_t *cf, n
          return NGX_CONF_ERROR;
      }
  
@@ -3095,7 +3095,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_scgi_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/modules/ngx_http_scgi_module.c
 +++ nginx-catap/nginx/src/http/modules/ngx_http_scgi_module.c
-@@ -1627,6 +1627,168 @@ ngx_http_scgi_cache(ngx_conf_t *cf, ngx_
+@@ -1622,6 +1622,168 @@ ngx_http_scgi_cache(ngx_conf_t *cf, ngx_
          return NGX_CONF_ERROR;
      }
  
@@ -3268,7 +3268,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_uwsgi_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/modules/ngx_http_uwsgi_module.c
 +++ nginx-catap/nginx/src/http/modules/ngx_http_uwsgi_module.c
-@@ -1679,6 +1679,168 @@ ngx_http_uwsgi_cache(ngx_conf_t *cf, ngx
+@@ -1674,6 +1674,168 @@ ngx_http_uwsgi_cache(ngx_conf_t *cf, ngx
          return NGX_CONF_ERROR;
      }
  
