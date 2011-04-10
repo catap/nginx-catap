@@ -1,2 +1,3 @@
 ngx_http_response_module
 ngx_http_is_bot
+ngx_http_rnd_filter_module
