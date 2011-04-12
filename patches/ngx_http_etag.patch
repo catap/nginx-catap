@@ -214,7 +214,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_core_module.c
 +++ nginx-catap/nginx/src/http/ngx_http_core_module.c
-@@ -2212,6 +2212,7 @@ ngx_http_subrequest(ngx_http_request_t *
+@@ -2216,6 +2216,7 @@ ngx_http_subrequest(ngx_http_request_t *
      ngx_http_clear_content_length(sr);
      ngx_http_clear_accept_ranges(sr);
      ngx_http_clear_last_modified(sr);

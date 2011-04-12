@@ -1779,7 +1779,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                     "uri changes: %d", r->uri_changes);
  
-@@ -2296,6 +2333,11 @@ ngx_http_internal_redirect(ngx_http_requ
+@@ -2300,6 +2337,11 @@ ngx_http_internal_redirect(ngx_http_requ
  {
      ngx_http_core_srv_conf_t  *cscf;
  
@@ -1791,7 +1791,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      r->uri_changes--;
  
      if (r->uri_changes == 0) {
-@@ -2308,6 +2350,15 @@ ngx_http_internal_redirect(ngx_http_requ
+@@ -2312,6 +2354,15 @@ ngx_http_internal_redirect(ngx_http_requ
          return NGX_DONE;
      }
  
@@ -1807,7 +1807,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      r->uri = *uri;
  
      if (args) {
-@@ -2509,9 +2560,15 @@ ngx_http_core_server(ngx_conf_t *cf, ngx
+@@ -2513,9 +2564,15 @@ ngx_http_core_server(ngx_conf_t *cf, ngx
  
      *cscfp = cscf;
  
@@ -1824,7 +1824,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      pcf = *cf;
      cf->ctx = ctx;
      cf->cmd_type = NGX_HTTP_SRV_CONF;
-@@ -2551,6 +2608,104 @@ ngx_http_core_server(ngx_conf_t *cf, ngx
+@@ -2555,6 +2612,104 @@ ngx_http_core_server(ngx_conf_t *cf, ngx
          }
      }
  
@@ -1929,7 +1929,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      return rv;
  }
  
-@@ -2567,6 +2722,10 @@ ngx_http_core_location(ngx_conf_t *cf, n
+@@ -2571,6 +2726,10 @@ ngx_http_core_location(ngx_conf_t *cf, n
      ngx_http_module_t         *module;
      ngx_http_conf_ctx_t       *ctx, *pctx;
      ngx_http_core_loc_conf_t  *clcf, *pclcf;
@@ -1940,7 +1940,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
  
      ctx = ngx_pcalloc(cf->pool, sizeof(ngx_http_conf_ctx_t));
      if (ctx == NULL) {
-@@ -2733,6 +2892,113 @@ ngx_http_core_location(ngx_conf_t *cf, n
+@@ -2737,6 +2896,113 @@ ngx_http_core_location(ngx_conf_t *cf, n
          }
      }
  
@@ -2054,7 +2054,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      if (ngx_http_add_location(cf, &pclcf->locations, clcf) != NGX_OK) {
          return NGX_CONF_ERROR;
      }
-@@ -3085,6 +3351,7 @@ ngx_http_core_create_loc_conf(ngx_conf_t
+@@ -3089,6 +3355,7 @@ ngx_http_core_create_loc_conf(ngx_conf_t
       *     clcf->auto_redirect = 0;
       *     clcf->alias = 0;
       *     clcf->gzip_proxied = 0;
@@ -2062,7 +2062,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
       */
  
      clcf->client_max_body_size = NGX_CONF_UNSET;
-@@ -3420,6 +3687,14 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
+@@ -3424,6 +3691,14 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
  #endif
  #endif
  
@@ -2077,7 +2077,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      return NGX_CONF_OK;
  }
  
-@@ -3444,6 +3719,10 @@ ngx_http_core_listen(ngx_conf_t *cf, ngx
+@@ -3448,6 +3723,10 @@ ngx_http_core_listen(ngx_conf_t *cf, ngx
      u.listen = 1;
      u.default_port = 80;
  
@@ -2088,7 +2088,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      if (ngx_parse_url(cf->pool, &u) != NGX_OK) {
          if (u.err) {
              ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-@@ -4517,6 +4796,75 @@ ngx_http_core_lowat_check(ngx_conf_t *cf
+@@ -4521,6 +4800,75 @@ ngx_http_core_lowat_check(ngx_conf_t *cf
  }
  
  
