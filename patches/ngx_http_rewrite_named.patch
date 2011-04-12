@@ -1,0 +1,63 @@
+Index: nginx-catap/nginx/src/http/modules/ngx_http_rewrite_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_rewrite_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_rewrite_module.c
+@@ -350,6 +350,11 @@ ngx_http_rewrite(ngx_conf_t *cf, ngx_com
+         last = 1;
+     }
+ 
++    if (value[2].data[0] == '@') {
++        regex->named_redirect = 1;
++        last = 1;
++    }
++
+     if (cf->args->nelts == 4) {
+         if (ngx_strcmp(value[3].data, "last") == 0) {
+             last = 1;
+@@ -411,6 +416,7 @@ ngx_http_rewrite(ngx_conf_t *cf, ngx_com
+     regex_end->args = regex->args;
+     regex_end->add_args = regex->add_args;
+     regex_end->redirect = regex->redirect;
++    regex_end->named_redirect = regex->named_redirect;
+ 
+     if (last) {
+         code = ngx_http_script_add_code(lcf->codes, sizeof(uintptr_t), &regex);
+Index: nginx-catap/nginx/src/http/ngx_http_script.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_script.c
++++ nginx-catap/nginx/src/http/ngx_http_script.c
+@@ -1080,6 +1080,14 @@ ngx_http_script_regex_end_code(ngx_http_
+     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                    "http script regex end");
+ 
++    if (code->named_redirect) {
++        ngx_http_named_location(r, &e->buf);
++        r->err_status = 0;
++        e->status = NGX_DONE;
++        e->ip += sizeof(ngx_http_script_regex_end_code_t);
++        return;
++    }
++
+     if (code->redirect) {
+ 
+         dst = e->buf.data;
+Index: nginx-catap/nginx/src/http/ngx_http_script.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_script.h
++++ nginx-catap/nginx/src/http/ngx_http_script.h
+@@ -129,6 +129,7 @@ typedef struct {
+     uintptr_t                   add_args:1;
+ 
+     uintptr_t                   redirect:1;
++    uintptr_t                   named_redirect:1;
+     uintptr_t                   break_cycle:1;
+ 
+     ngx_str_t                   name;
+@@ -145,6 +146,7 @@ typedef struct {
+     uintptr_t                   add_args:1;
+ 
+     uintptr_t                   redirect:1;
++    uintptr_t                   named_redirect:1;
+ } ngx_http_script_regex_end_code_t;
+ 
+ #endif

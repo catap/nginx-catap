@@ -15,3 +15,4 @@ ngx_mstimestamp_variable.patch
 ngx_loadavg_variables.patch
 ngx_addon's_if_statment.patch
 ngx_http_multi_map.patch
+ngx_http_rewrite_named.patch
