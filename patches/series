@@ -14,3 +14,4 @@ ngx_http_empty_gif_size.patch
 ngx_mstimestamp_variable.patch
 ngx_loadavg_variables.patch
 ngx_addon's_if_statment.patch
+ngx_http_multi_map.patch

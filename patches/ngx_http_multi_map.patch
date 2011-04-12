@@ -1,0 +1,656 @@
+Index: nginx-catap/nginx/src/http/modules/ngx_http_map_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_map_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_map_module.c
+@@ -16,15 +16,17 @@ typedef struct {
+ 
+ 
+ typedef struct {
+-    ngx_hash_keys_arrays_t      keys;
++    ngx_hash_keys_arrays_t     *keys;
+ 
+-    ngx_array_t                *values_hash;
+-    ngx_array_t                 var_values;
++    ngx_array_t               **values_hash;
++    ngx_array_t                *var_values;
+ #if (NGX_PCRE)
+-    ngx_array_t                 regexes;
++    ngx_array_t                *regexes;
+ #endif
+ 
+-    ngx_http_variable_value_t  *default_value;
++    ngx_uint_t                  nvars;
++
++    ngx_http_variable_value_t **default_values;
+     ngx_conf_t                 *cf;
+     ngx_uint_t                  hostnames;      /* unsigned  hostnames:1 */
+ } ngx_http_map_conf_ctx_t;
+@@ -32,7 +34,7 @@ typedef struct {
+ 
+ typedef struct {
+     ngx_http_map_t              map;
+-    ngx_http_complex_value_t    value;
++    ngx_http_complex_value_t   *value;
+     ngx_http_variable_value_t  *default_value;
+     ngx_uint_t                  hostnames;      /* unsigned  hostnames:1 */
+ } ngx_http_map_ctx_t;
+@@ -48,7 +50,7 @@ static char *ngx_http_map(ngx_conf_t *cf
+ static ngx_command_t  ngx_http_map_commands[] = {
+ 
+     { ngx_string("map"),
+-      NGX_HTTP_MAIN_CONF|NGX_CONF_BLOCK|NGX_CONF_TAKE2,
++      NGX_HTTP_MAIN_CONF|NGX_CONF_BLOCK|NGX_CONF_2MORE,
+       ngx_http_map_block,
+       NGX_HTTP_MAIN_CONF_OFFSET,
+       0,
+@@ -117,7 +119,7 @@ ngx_http_map_variable(ngx_http_request_t
+     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                    "http map started");
+ 
+-    if (ngx_http_complex_value(r, &map->value, &val) != NGX_OK) {
++    if (ngx_http_complex_value(r, map->value, &val) != NGX_OK) {
+         return NGX_ERROR;
+     }
+ 
+@@ -178,10 +180,12 @@ ngx_http_map_block(ngx_conf_t *cf, ngx_c
+     ngx_str_t                         *value, name;
+     ngx_conf_t                         save;
+     ngx_pool_t                        *pool;
++    ngx_uint_t                         i;
+     ngx_hash_init_t                    hash;
+     ngx_http_map_ctx_t                *map;
+     ngx_http_variable_t               *var;
+     ngx_http_map_conf_ctx_t            ctx;
++    ngx_http_complex_value_t          *map_value;
+     ngx_http_compile_complex_value_t   ccv;
+ 
+     if (mcf->hash_max_size == NGX_CONF_UNSET_UINT) {
+@@ -196,72 +200,110 @@ ngx_http_map_block(ngx_conf_t *cf, ngx_c
+                                           ngx_cacheline_size);
+     }
+ 
+-    map = ngx_pcalloc(cf->pool, sizeof(ngx_http_map_ctx_t));
++    ctx.nvars = cf->args->nelts - 2;
++
++    map = ngx_pcalloc(cf->pool, sizeof(ngx_http_map_ctx_t) * ctx.nvars);
+     if (map == NULL) {
+         return NGX_CONF_ERROR;
+     }
+ 
++    ctx.keys = ngx_pcalloc(cf->pool, sizeof(ngx_hash_keys_arrays_t) * ctx.nvars);
++    if (ctx.keys == NULL) {
++        return NGX_CONF_ERROR;
++    }
++
++    ctx.values_hash = ngx_pcalloc(cf->pool, sizeof(ngx_array_t *) * ctx.nvars);
++    if (ctx.values_hash == NULL) {
++        return NGX_CONF_ERROR;
++    }
++
++    ctx.var_values = ngx_pcalloc(cf->pool, sizeof(ngx_array_t) * ctx.nvars);
++    if (ctx.var_values == NULL) {
++        return NGX_CONF_ERROR;
++    }
++
++#if (NGX_PCRE)
++    ctx.regexes = ngx_pcalloc(cf->pool, sizeof(ngx_array_t) * ctx.nvars);
++    if (ctx.regexes == NULL) {
++        return NGX_CONF_ERROR;
++    }
++#endif
++
++    map_value = ngx_pcalloc(cf->pool, sizeof(ngx_http_complex_value_t));
++    if (map_value == NULL) {
++        return NGX_CONF_ERROR;
++    }
++
+     value = cf->args->elts;
+ 
+     ngx_memzero(&ccv, sizeof(ngx_http_compile_complex_value_t));
+ 
+     ccv.cf = cf;
+     ccv.value = &value[1];
+-    ccv.complex_value = &map->value;
++    ccv.complex_value = map_value;
+ 
+     if (ngx_http_compile_complex_value(&ccv) != NGX_OK) {
+         return NGX_CONF_ERROR;
+     }
+ 
+-    name = value[2];
+-    name.len--;
+-    name.data++;
+-
+-    var = ngx_http_add_variable(cf, &name, NGX_HTTP_VAR_CHANGEABLE);
+-    if (var == NULL) {
+-        return NGX_CONF_ERROR;
+-    }
+-
+-    var->get_handler = ngx_http_map_variable;
+-    var->data = (uintptr_t) map;
+-
+     pool = ngx_create_pool(16384, cf->log);
+     if (pool == NULL) {
+         return NGX_CONF_ERROR;
+     }
+ 
+-    ctx.keys.pool = cf->pool;
+-    ctx.keys.temp_pool = pool;
++    for (i = 0; i < ctx.nvars; i++) {
+ 
+-    if (ngx_hash_keys_array_init(&ctx.keys, NGX_HASH_LARGE) != NGX_OK) {
+-        ngx_destroy_pool(pool);
+-        return NGX_CONF_ERROR;
+-    }
++        map[i].value = map_value;
+ 
+-    ctx.values_hash = ngx_pcalloc(pool, sizeof(ngx_array_t) * ctx.keys.hsize);
+-    if (ctx.values_hash == NULL) {
+-        ngx_destroy_pool(pool);
+-        return NGX_CONF_ERROR;
+-    }
++        name = value[i + 2];
++        name.len--;
++        name.data++;
+ 
+-    if (ngx_array_init(&ctx.var_values, cf->pool, 2,
+-                       sizeof(ngx_http_variable_value_t))
+-        != NGX_OK)
+-    {
+-        ngx_destroy_pool(pool);
+-        return NGX_CONF_ERROR;
+-    }
++        var = ngx_http_add_variable(cf, &name, NGX_HTTP_VAR_CHANGEABLE);
++        if (var == NULL) {
++            return NGX_CONF_ERROR;
++        }
++
++        var->get_handler = ngx_http_map_variable;
++        var->data = (uintptr_t) &map[i];
++
++        ctx.keys[i].pool = cf->pool;
++        ctx.keys[i].temp_pool = pool;
++
++        if (ngx_hash_keys_array_init(&ctx.keys[i], NGX_HASH_LARGE) != NGX_OK) {
++            ngx_destroy_pool(pool);
++            return NGX_CONF_ERROR;
++        }
++
++        ctx.values_hash[i] = ngx_pcalloc(pool, sizeof(ngx_array_t) * ctx.keys[i].hsize);
++        if (ctx.values_hash[i] == NULL) {
++            ngx_destroy_pool(pool);
++            return NGX_CONF_ERROR;
++        }
++
++        if (ngx_array_init(&ctx.var_values[i], cf->pool, 2,
++                           sizeof(ngx_http_variable_value_t))
++            != NGX_OK)
++            {
++                ngx_destroy_pool(pool);
++                return NGX_CONF_ERROR;
++            }
+ 
+ #if (NGX_PCRE)
+-    if (ngx_array_init(&ctx.regexes, cf->pool, 2, sizeof(ngx_http_map_regex_t))
+-        != NGX_OK)
+-    {
+-        ngx_destroy_pool(pool);
++        if (ngx_array_init(&ctx.regexes[i], cf->pool, 2, sizeof(ngx_http_map_regex_t))
++            != NGX_OK)
++            {
++                ngx_destroy_pool(pool);
++                return NGX_CONF_ERROR;
++            }
++#endif
++    }
++
++    ctx.default_values = ngx_pcalloc(cf->pool, sizeof(ngx_http_variable_value_t *) * ctx.nvars);
++    if (ctx.default_values == NULL) {
+         return NGX_CONF_ERROR;
+     }
+-#endif
+ 
+-    ctx.default_value = NULL;
+     ctx.cf = &save;
+     ctx.hostnames = 0;
+ 
+@@ -280,76 +322,82 @@ ngx_http_map_block(ngx_conf_t *cf, ngx_c
+         return rv;
+     }
+ 
+-    map->default_value = ctx.default_value ? ctx.default_value:
++    for (i = 0; i < ctx.nvars; i++) {
++
++        map[i].default_value = ctx.default_values[i] ? ctx.default_values[i]:
+                                              &ngx_http_variable_null_value;
+ 
+-    hash.key = ngx_hash_key_lc;
+-    hash.max_size = mcf->hash_max_size;
+-    hash.bucket_size = mcf->hash_bucket_size;
+-    hash.name = "map_hash";
+-    hash.pool = cf->pool;
+-
+-    if (ctx.keys.keys.nelts) {
+-        hash.hash = &map->map.hash.hash;
+-        hash.temp_pool = NULL;
++        ngx_memzero(&hash, sizeof(ngx_hash_init_t));
+ 
+-        if (ngx_hash_init(&hash, ctx.keys.keys.elts, ctx.keys.keys.nelts)
+-            != NGX_OK)
+-        {
+-            ngx_destroy_pool(pool);
+-            return NGX_CONF_ERROR;
++        hash.key = ngx_hash_key_lc;
++        hash.max_size = mcf->hash_max_size;
++        hash.bucket_size = mcf->hash_bucket_size;
++        hash.name = "map_hash";
++        hash.pool = cf->pool;
++
++        if (ctx.keys[i].keys.nelts) {
++            hash.hash = &map[i].map.hash.hash;
++            hash.temp_pool = NULL;
++
++            if (ngx_hash_init(&hash, ctx.keys[i].keys.elts, ctx.keys[i].keys.nelts)
++                != NGX_OK)
++                {
++                    ngx_destroy_pool(pool);
++                    return NGX_CONF_ERROR;
++                }
+         }
+-    }
+ 
+-    if (ctx.keys.dns_wc_head.nelts) {
++        if (ctx.keys[i].dns_wc_head.nelts) {
+ 
+-        ngx_qsort(ctx.keys.dns_wc_head.elts,
+-                  (size_t) ctx.keys.dns_wc_head.nelts,
+-                  sizeof(ngx_hash_key_t), ngx_http_map_cmp_dns_wildcards);
++            ngx_qsort(ctx.keys[i].dns_wc_head.elts,
++                      (size_t) ctx.keys[i].dns_wc_head.nelts,
++                      sizeof(ngx_hash_key_t), ngx_http_map_cmp_dns_wildcards);
+ 
+-        hash.hash = NULL;
+-        hash.temp_pool = pool;
++            hash.hash = NULL;
++            hash.temp_pool = pool;
+ 
+-        if (ngx_hash_wildcard_init(&hash, ctx.keys.dns_wc_head.elts,
+-                                   ctx.keys.dns_wc_head.nelts)
+-            != NGX_OK)
+-        {
+-            ngx_destroy_pool(pool);
+-            return NGX_CONF_ERROR;
++            if (ngx_hash_wildcard_init(&hash, ctx.keys[i].dns_wc_head.elts,
++                                       ctx.keys[i].dns_wc_head.nelts)
++                != NGX_OK)
++                {
++                    ngx_destroy_pool(pool);
++                    return NGX_CONF_ERROR;
++                }
++
++            map[i].map.hash.wc_head = (ngx_hash_wildcard_t *) hash.hash;
+         }
+ 
+-        map->map.hash.wc_head = (ngx_hash_wildcard_t *) hash.hash;
+-    }
++        if (ctx.keys[i].dns_wc_tail.nelts) {
+ 
+-    if (ctx.keys.dns_wc_tail.nelts) {
++            ngx_qsort(ctx.keys[i].dns_wc_tail.elts,
++                      (size_t) ctx.keys[i].dns_wc_tail.nelts,
++                      sizeof(ngx_hash_key_t), ngx_http_map_cmp_dns_wildcards);
+ 
+-        ngx_qsort(ctx.keys.dns_wc_tail.elts,
+-                  (size_t) ctx.keys.dns_wc_tail.nelts,
+-                  sizeof(ngx_hash_key_t), ngx_http_map_cmp_dns_wildcards);
++            hash.hash = NULL;
++            hash.temp_pool = pool;
+ 
+-        hash.hash = NULL;
+-        hash.temp_pool = pool;
++            if (ngx_hash_wildcard_init(&hash, ctx.keys[i].dns_wc_tail.elts,
++                                       ctx.keys[i].dns_wc_tail.nelts)
++                != NGX_OK)
++                {
++                    ngx_destroy_pool(pool);
++                    return NGX_CONF_ERROR;
++                }
+ 
+-        if (ngx_hash_wildcard_init(&hash, ctx.keys.dns_wc_tail.elts,
+-                                   ctx.keys.dns_wc_tail.nelts)
+-            != NGX_OK)
+-        {
+-            ngx_destroy_pool(pool);
+-            return NGX_CONF_ERROR;
++            map[i].map.hash.wc_tail = (ngx_hash_wildcard_t *) hash.hash;
+         }
+ 
+-        map->map.hash.wc_tail = (ngx_hash_wildcard_t *) hash.hash;
+-    }
+-
+ #if (NGX_PCRE)
+ 
+-    if (ctx.regexes.nelts) {
+-        map->map.regex = ctx.regexes.elts;
+-        map->map.nregex = ctx.regexes.nelts;
+-    }
++        if (ctx.regexes[i].nelts) {
++            map[i].map.regex = ctx.regexes[i].elts;
++            map[i].map.nregex = ctx.regexes[i].nelts;
++        }
+ 
+ #endif
+ 
++    }
++
+     ngx_destroy_pool(pool);
+ 
+     return rv;
+@@ -373,7 +421,7 @@ ngx_http_map(ngx_conf_t *cf, ngx_command
+ {
+     ngx_int_t                   rc, index;
+     ngx_str_t                  *value, file, name;
+-    ngx_uint_t                  i, key;
++    ngx_uint_t                  i, j, key;
+     ngx_http_map_conf_ctx_t    *ctx;
+     ngx_http_variable_value_t  *var, **vp;
+ 
+@@ -387,7 +435,7 @@ ngx_http_map(ngx_conf_t *cf, ngx_command
+         ctx->hostnames = 1;
+         return NGX_CONF_OK;
+ 
+-    } else if (cf->args->nelts != 2) {
++    } else if (cf->args->nelts < 2) {
+         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                            "invalid number of the map parameters");
+         return NGX_CONF_ERROR;
+@@ -405,167 +453,174 @@ ngx_http_map(ngx_conf_t *cf, ngx_command
+         return ngx_conf_parse(cf, &file);
+     }
+ 
+-    if (value[1].data[0] == '$') {
+-        name = value[1];
+-        name.len--;
+-        name.data++;
++    for (i = 0; i < ctx->nvars; i++) {
+ 
+-        index = ngx_http_get_variable_index(ctx->cf, &name);
+-        if (index == NGX_ERROR) {
+-            return NGX_CONF_ERROR;
+-        }
++        if (value[i + 1].data[0] == '$') {
++            name = value[i + 1];
++            name.len--;
++            name.data++;
++
++            index = ngx_http_get_variable_index(ctx->cf, &name);
++            if (index == NGX_ERROR) {
++                return NGX_CONF_ERROR;
++            }
+ 
+-        var = ctx->var_values.elts;
++            var = ctx->var_values[i].elts;
+ 
+-        for (i = 0; i < ctx->var_values.nelts; i++) {
+-            if (index == (ngx_int_t) var[i].data) {
+-                goto found;
++            for (j = 0; j < ctx->var_values[i].nelts; j++) {
++                if (index == (ngx_int_t) var[j].data) {
++                    goto found;
++                }
+             }
+-        }
+ 
+-        var = ngx_palloc(ctx->keys.pool, sizeof(ngx_http_variable_value_t));
+-        if (var == NULL) {
+-            return NGX_CONF_ERROR;
+-        }
+ 
+-        var->valid = 0;
+-        var->no_cacheable = 0;
+-        var->not_found = 0;
+-        var->len = 0;
+-        var->data = (u_char *) index;
++            var = ngx_palloc(ctx->keys[i].pool, sizeof(ngx_http_variable_value_t));
++            if (var == NULL) {
++                return NGX_CONF_ERROR;
++            }
+ 
+-        vp = ngx_array_push(&ctx->var_values);
+-        if (vp == NULL) {
+-            return NGX_CONF_ERROR;
+-        }
++            var->valid = 0;
++            var->no_cacheable = 0;
++            var->not_found = 0;
++            var->len = 0;
++            var->data = (u_char *) index;
++
++            vp = ngx_array_push(&ctx->var_values[i]);
++            if (vp == NULL) {
++                return NGX_CONF_ERROR;
++            }
+ 
+-        *vp = var;
++            *vp = var;
+ 
+-        goto found;
+-    }
++            goto found;
++        }
+ 
+-    key = 0;
++        key = 0;
+ 
+-    for (i = 0; i < value[1].len; i++) {
+-        key = ngx_hash(key, value[1].data[i]);
+-    }
++        for (j = 0; j < value[i + 1].len; j++) {
++            key = ngx_hash(key, value[i + 1].data[j]);
++        }
+ 
+-    key %= ctx->keys.hsize;
++        key %= ctx->keys[i].hsize;
+ 
+-    vp = ctx->values_hash[key].elts;
++        vp = ctx->values_hash[i][key].elts;
+ 
+-    if (vp) {
+-        for (i = 0; i < ctx->values_hash[key].nelts; i++) {
+-            if (value[1].len != (size_t) vp[i]->len) {
+-                continue;
+-            }
++        if (vp) {
++            for (j = 0; j < ctx->values_hash[i][key].nelts; j++) {
++                if (value[i + 1].len != (size_t) vp[j]->len) {
++                    continue;
++                }
+ 
+-            if (ngx_strncmp(value[1].data, vp[i]->data, value[1].len) == 0) {
+-                var = vp[i];
+-                goto found;
++                if (ngx_strncmp(value[i + 1].data, vp[j]->data,
++                                value[i + 1].len) == 0) {
++                    var = vp[j];
++                    goto found;
++                }
+             }
++
++        } else {
++            if (ngx_array_init(&ctx->values_hash[i][key], cf->pool, 4,
++                               sizeof(ngx_http_variable_value_t *))
++                != NGX_OK)
++                {
++                    return NGX_CONF_ERROR;
++                }
+         }
+ 
+-    } else {
+-        if (ngx_array_init(&ctx->values_hash[key], cf->pool, 4,
+-                           sizeof(ngx_http_variable_value_t *))
+-            != NGX_OK)
+-        {
++        var = ngx_palloc(ctx->keys[i].pool, sizeof(ngx_http_variable_value_t));
++        if (var == NULL) {
+             return NGX_CONF_ERROR;
+         }
+-    }
+ 
+-    var = ngx_palloc(ctx->keys.pool, sizeof(ngx_http_variable_value_t));
+-    if (var == NULL) {
+-        return NGX_CONF_ERROR;
+-    }
+-
+-    var->len = value[1].len;
+-    var->data = ngx_pstrdup(ctx->keys.pool, &value[1]);
+-    if (var->data == NULL) {
+-        return NGX_CONF_ERROR;
+-    }
++        var->len = value[i + 1].len;
++        var->data = ngx_pstrdup(ctx->keys[i].pool, &value[i + 1]);
++        if (var->data == NULL) {
++            return NGX_CONF_ERROR;
++        }
+ 
+-    var->valid = 1;
+-    var->no_cacheable = 0;
+-    var->not_found = 0;
++        var->valid = 1;
++        var->no_cacheable = 0;
++        var->not_found = 0;
+ 
+-    vp = ngx_array_push(&ctx->values_hash[key]);
+-    if (vp == NULL) {
+-        return NGX_CONF_ERROR;
+-    }
++        vp = ngx_array_push(&ctx->values_hash[i][key]);
++        if (vp == NULL) {
++            return NGX_CONF_ERROR;
++        }
+ 
+-    *vp = var;
++        *vp = var;
+ 
+ found:
+ 
+-    if (ngx_strcmp(value[0].data, "default") == 0) {
++        if (ngx_strcmp(value[0].data, "default") == 0) {
+ 
+-        if (ctx->default_value) {
+-            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+-                               "duplicate default map parameter");
+-            return NGX_CONF_ERROR;
+-        }
++            if (ctx->default_values[i]) {
++                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
++                                   "duplicate default map parameter");
++                return NGX_CONF_ERROR;
++            }
+ 
+-        ctx->default_value = var;
++            ctx->default_values[i] = var;
+ 
+-        return NGX_CONF_OK;
+-    }
++            continue;
++        }
+ 
+ #if (NGX_PCRE)
+ 
+-    if (value[0].len && value[0].data[0] == '~') {
+-        ngx_regex_compile_t    rc;
+-        ngx_http_map_regex_t  *regex;
+-        u_char                 errstr[NGX_MAX_CONF_ERRSTR];
++        if (value[0].len && value[0].data[0] == '~') {
++            ngx_regex_compile_t    rc;
++            ngx_http_map_regex_t  *regex;
++            u_char                 errstr[NGX_MAX_CONF_ERRSTR];
++
++            regex = ngx_array_push(&ctx->regexes[i]);
++            if (regex == NULL) {
++                return NGX_CONF_ERROR;
++            }
+ 
+-        regex = ngx_array_push(&ctx->regexes);
+-        if (regex == NULL) {
+-            return NGX_CONF_ERROR;
+-        }
++            value[0].len--;
++            value[0].data++;
+ 
+-        value[0].len--;
+-        value[0].data++;
++            ngx_memzero(&rc, sizeof(ngx_regex_compile_t));
+ 
+-        ngx_memzero(&rc, sizeof(ngx_regex_compile_t));
++            rc.pattern = value[0];
++            rc.err.len = NGX_MAX_CONF_ERRSTR;
++            rc.err.data = errstr;
++
++            regex->regex = ngx_http_regex_compile(ctx->cf, &rc);
++            if (regex->regex == NULL) {
++                return NGX_CONF_ERROR;
++            }
+ 
+-        rc.pattern = value[0];
+-        rc.err.len = NGX_MAX_CONF_ERRSTR;
+-        rc.err.data = errstr;
++            regex->value = var;
+ 
+-        regex->regex = ngx_http_regex_compile(ctx->cf, &rc);
+-        if (regex->regex == NULL) {
+-            return NGX_CONF_ERROR;
++            return NGX_CONF_OK;
+         }
+ 
+-        regex->value = var;
+-
+-        return NGX_CONF_OK;
+-    }
+-
+ #endif
+ 
+-    if (value[0].len && value[0].data[0] == '\\') {
+-        value[0].len--;
+-        value[0].data++;
+-    }
++        if (value[0].len && value[0].data[0] == '\\') {
++            value[0].len--;
++            value[0].data++;
++        }
+ 
+-    rc = ngx_hash_add_key(&ctx->keys, &value[0], var,
+-                          (ctx->hostnames) ? NGX_HASH_WILDCARD_KEY : 0);
++        rc = ngx_hash_add_key(&ctx->keys[i], &value[0], var,
++                              (ctx->hostnames) ? NGX_HASH_WILDCARD_KEY : 0);
+ 
+-    if (rc == NGX_OK) {
+-        return NGX_CONF_OK;
+-    }
++        if (rc == NGX_OK) {
++            continue;
++        }
+ 
+-    if (rc == NGX_DECLINED) {
+-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+-                           "invalid hostname or wildcard \"%V\"", &value[0]);
+-    }
++        if (rc == NGX_DECLINED) {
++            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
++                               "invalid hostname or wildcard \"%V\"", &value[0]);
++        }
+ 
+-    if (rc == NGX_BUSY) {
+-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+-                           "conflicting parameter \"%V\"", &value[0]);
++        if (rc == NGX_BUSY) {
++            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
++                               "conflicting parameter \"%V\"", &value[0]);
++        }
++
++        return NGX_CONF_ERROR;
+     }
+ 
+-    return NGX_CONF_ERROR;
++    return NGX_CONF_OK;
+ }
