@@ -13,3 +13,6 @@
 [submodule "modules/ngx_http_rnd_filter_module"]
 	path = modules/ngx_http_rnd_filter_module
 	url = git://github.com/catap/ngx_http_rnd_filter_module.git
+[submodule "modules/ngx_http_hash"]
+	path = modules/ngx_http_hash
+	url = git://github.com/catap/ngx_http_hash.git

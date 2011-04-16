@@ -928,13 +928,15 @@ Index: nginx-catap/nginx/src/core/ngx_lookup3.h
 ===================================================================
 --- /dev/null
 +++ nginx-catap/nginx/src/core/ngx_lookup3.h
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,97 @@
 +/*
 + * ngx_lookup3.h by Kirill A. Korinskiy
 + */
 +
 +#ifndef _NGX_LOOKUP3_H_INCLUDED_
 +#define _NGX_LOOKUP3_H_INCLUDED_
++
++#define NGX_HAVE_LOOKUP3 1
 +
 +#include <ngx_config.h>
 +#include <ngx_core.h>
