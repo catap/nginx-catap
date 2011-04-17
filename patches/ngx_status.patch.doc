@@ -1,0 +1,31 @@
+<h5>Описание&nbsp;директив:</h5> 
+ 
+<p><strong>syntax: </strong>status_window <strong><em>период</em></strong><br><strong>default: </strong>status_window 300<br><strong>context: </strong>в оснвоной части&nbsp;конфига</p> 
+ 
+<p>Директива устанавливает максимально период хранения по секундной информации о событиях. Чем дольше храним &mdash; тем больше требуется&nbsp;памяти.</p> 
+ 
+<p><strong>syntax: </strong>status_txt <strong><em>период</em> [<em>период</em> &#8230;]</strong><br><strong>default: </strong>отсутствует<br><strong>context: </strong>location</p> 
+ 
+<p>Директива устанавливает отображаемые периоды в статистике для текстового статуса. Если отображаемый период больше максимального, то он округляется до него. Если период установлен в 0 то показывается общая статистика и среднее количество событий за текущую&nbsp;секунду.</p> 
+ 
+<p><strong>syntax: </strong>status_xml <strong><em>период</em> [<em>период</em> &#8230;]</strong><br><strong>default: </strong>отсутствует<br><strong>context: </strong>location</p> 
+ 
+<p>Директива устанавливает отображаемые периоды в статистике для xml статуса. Если отображаемый период больше максимального, то он округляется до него. Если период установлен в 0 то показывается общая статистика и среднее количество событий за текущую&nbsp;секунду.</p> 
+ 
+<p><strong>syntax: </strong>status_xml_xsl_uri <strong><em>uri</em> </strong><br><strong>default: </strong>отсутствует<br><strong>context: </strong>location</p> 
+ 
+<p>Директива устанавливает отображаемый стиль в xml&nbsp;документе. </p> 
+ 
+<p><strong>syntax: </strong>status_capture <strong><em>код</em> [<em>код</em> &#8230;]</strong><br><strong>default: </strong>отсутствует<br><strong>context: </strong>location</p> 
+ 
+<p>Директива устанавливает коды ответа сервера, которые будут помещаться в&nbsp;статус.</p> 
+ 
+<p><strong>syntax: </strong>upstream_status_capture <strong><em>код</em> [<em>код</em> &#8230;]</strong><br><strong>default: </strong>отсутствует<br><strong>context: </strong>upstream</p>
+
+<p>Директива устанавливает коды ответа от upstream, которые будут помещаться в&nbsp;статус.</p> 
+
+<h5>Пример&nbsp;использования</h5> 
+ 
+<p>Вы можете посмотреть статусы у меня <a href="http://catap.ru/status.txt">http://catap.ru/status.txt</a> и <a href="http://catap.ru/status.xml">http://catap.ru/status.xml</a>.</p> 
+ 
+<p>С учетом статусов nginx на моем сервере потребляет около 15&nbsp;мегабайт.</p> 
