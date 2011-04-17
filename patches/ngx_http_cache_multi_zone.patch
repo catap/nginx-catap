@@ -1,0 +1,621 @@
+Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_proxy_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
+@@ -319,7 +319,7 @@ static ngx_command_t  ngx_http_proxy_com
+ #if (NGX_HTTP_CACHE)
+ 
+     { ngx_string("proxy_cache"),
+-      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
++      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
+       ngx_http_proxy_cache,
+       NGX_HTTP_LOC_CONF_OFFSET,
+       0,
+@@ -1683,7 +1683,8 @@ ngx_http_proxy_create_loc_conf(ngx_conf_
+     conf->upstream.pass_request_body = NGX_CONF_UNSET;
+ 
+ #if (NGX_HTTP_CACHE)
+-    conf->upstream.cache = NGX_CONF_UNSET_PTR;
++    conf->upstream.caches = NGX_CONF_UNSET_PTR;
++    conf->upstream.ncaches = NGX_CONF_UNSET_UINT;
+     conf->upstream.cache_min_uses = NGX_CONF_UNSET_UINT;
+     conf->upstream.cache_bypass = NGX_CONF_UNSET_PTR;
+     conf->upstream.no_cache = NGX_CONF_UNSET_PTR;
+@@ -1719,6 +1720,7 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
+ 
+     u_char                     *p;
+     size_t                      size;
++    ngx_uint_t                  i;
+     ngx_keyval_t               *s;
+     ngx_hash_init_t             hash;
+     ngx_http_core_loc_conf_t   *clcf;
+@@ -1878,19 +1880,27 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
+ 
+ #if (NGX_HTTP_CACHE)
+ 
+-    ngx_conf_merge_ptr_value(conf->upstream.cache,
+-                              prev->upstream.cache, NULL);
++    ngx_conf_merge_ptr_value(conf->upstream.caches,
++                              prev->upstream.caches, NULL);
+ 
+-    if (conf->upstream.cache && conf->upstream.cache->data == NULL) {
+-        ngx_shm_zone_t  *shm_zone;
++    ngx_conf_merge_uint_value(conf->upstream.ncaches,
++                              prev->upstream.ncaches, 0);
+ 
+-        shm_zone = conf->upstream.cache;
++    if (conf->upstream.caches) {
++        for (i = 0; i < conf->upstream.ncaches; i++) {
++            if (conf->upstream.caches[i] &&
++                conf->upstream.caches[i]->data == NULL) {
++                ngx_shm_zone_t  *shm_zone;
++
++                shm_zone = conf->upstream.caches[i];
++
++                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
++                                   "\"proxy_cache\" zone \"%V\" is unknown",
++                                   &shm_zone->shm.name);
+ 
+-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+-                           "\"proxy_cache\" zone \"%V\" is unknown",
+-                           &shm_zone->shm.name);
+-
+-        return NGX_CONF_ERROR;
++                return NGX_CONF_ERROR;
++            }
++        }
+     }
+ 
+     ngx_conf_merge_uint_value(conf->upstream.cache_min_uses,
+@@ -2115,7 +2125,7 @@ ngx_http_proxy_merge_headers(ngx_conf_t 
+ 
+     if (conf->headers_set_hash.buckets
+ #if (NGX_HTTP_CACHE)
+-        && ((conf->upstream.cache == NULL) == (prev->upstream.cache == NULL))
++        && ((conf->upstream.caches == NULL) == (prev->upstream.caches == NULL))
+ #endif
+        )
+     {
+@@ -2152,8 +2162,8 @@ ngx_http_proxy_merge_headers(ngx_conf_t 
+ 
+ #if (NGX_HTTP_CACHE)
+ 
+-    h = conf->upstream.cache ? ngx_http_proxy_cache_headers:
+-                               ngx_http_proxy_headers;
++    h = conf->upstream.caches ? ngx_http_proxy_cache_headers:
++                                ngx_http_proxy_headers;
+ #else
+ 
+     h = ngx_http_proxy_headers;
+@@ -2612,8 +2622,8 @@ ngx_http_proxy_store(ngx_conf_t *cf, ngx
+ 
+ #if (NGX_HTTP_CACHE)
+ 
+-    if (plcf->upstream.cache != NGX_CONF_UNSET_PTR
+-        && plcf->upstream.cache != NULL)
++    if (plcf->upstream.caches != NGX_CONF_UNSET_PTR
++        && plcf->upstream.caches != NULL)
+     {
+         return "is incompatible with \"proxy_cache\"";
+     }
+@@ -2654,15 +2664,16 @@ ngx_http_proxy_cache(ngx_conf_t *cf, ngx
+     ngx_http_proxy_loc_conf_t *plcf = conf;
+ 
+     ngx_str_t  *value;
++    ngx_uint_t  i;
+ 
+     value = cf->args->elts;
+ 
+-    if (plcf->upstream.cache != NGX_CONF_UNSET_PTR) {
++    if (plcf->upstream.caches != NGX_CONF_UNSET_PTR) {
+         return "is duplicate";
+     }
+ 
+     if (ngx_strcmp(value[1].data, "off") == 0) {
+-        plcf->upstream.cache = NULL;
++        plcf->upstream.caches = NULL;
+         return NGX_CONF_OK;
+     }
+ 
+@@ -2670,12 +2681,22 @@ ngx_http_proxy_cache(ngx_conf_t *cf, ngx
+         return "is incompatible with \"proxy_store\"";
+     }
+ 
+-    plcf->upstream.cache = ngx_shared_memory_add(cf, &value[1], 0,
+-                                                 &ngx_http_proxy_module);
+-    if (plcf->upstream.cache == NULL) {
++    plcf->upstream.ncaches = cf->args->nelts - 1;
++
++    plcf->upstream.caches = ngx_palloc(cf->pool,
++        sizeof(ngx_shm_zone_t *) * plcf->upstream.ncaches);
++    if (plcf->upstream.caches == NULL) {
+         return NGX_CONF_ERROR;
+     }
+ 
++    for (i = 0; i < plcf->upstream.ncaches; i++) {
++        plcf->upstream.caches[i] = ngx_shared_memory_add(cf, &value[1], 0,
++                                                    &ngx_http_proxy_module);
++        if (plcf->upstream.caches[i] == NULL) {
++            return NGX_CONF_ERROR;
++        }
++    }
++
+ #if (NGX_STATUS)
+     ngx_http_core_loc_conf_t  *clcf =
+ 	ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
+Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream.c
++++ nginx-catap/nginx/src/http/ngx_http_upstream.c
+@@ -494,7 +494,7 @@ ngx_http_upstream_init_request(ngx_http_
+ 
+ #if (NGX_HTTP_CACHE)
+ 
+-    if (u->conf->cache) {
++    if (u->conf->caches) {
+         ngx_int_t  rc;
+ 
+         rc = ngx_http_upstream_cache(r, u);
+@@ -734,9 +734,12 @@ ngx_http_upstream_cache(ngx_http_request
+ 
+         c = r->cache;
+ 
++        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
++                       "use %d cache zone", r->cache->crc32%u->conf->ncaches);
++
+         c->min_uses = u->conf->cache_min_uses;
+         c->body_start = u->conf->buffer_size;
+-        c->file_cache = u->conf->cache->data;
++        c->file_cache = u->conf->caches[c->crc32%u->conf->ncaches]->data;
+ 
+         u->cache_status = NGX_HTTP_CACHE_MISS;
+     }
+@@ -2203,9 +2206,13 @@ ngx_http_upstream_send_response(ngx_http
+ 
+             /* TODO: add keys */
+ 
++            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, c->log, 0,
++                           "use %d cache zone", r->cache->crc32%u->conf->ncaches);
++
+             r->cache->min_uses = u->conf->cache_min_uses;
+             r->cache->body_start = u->conf->buffer_size;
+-            r->cache->file_cache = u->conf->cache->data;
++            r->cache->file_cache =
++                u->conf->caches[r->cache->crc32%u->conf->ncaches]->data;
+ 
+             if (ngx_http_file_cache_create(r) != NGX_OK) {
+                 ngx_http_upstream_finalize_request(r, u, 0);
+@@ -4403,7 +4410,7 @@ ngx_http_upstream_hide_headers_hash(ngx_
+ 
+         if (conf->hide_headers_hash.buckets
+ #if (NGX_HTTP_CACHE)
+-            && ((conf->cache == NULL) == (prev->cache == NULL))
++            && ((conf->caches == NULL) == (prev->caches == NULL))
+ #endif
+            )
+         {
+Index: nginx-catap/nginx/src/http/ngx_http_upstream.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream.h
++++ nginx-catap/nginx/src/http/ngx_http_upstream.h
+@@ -161,7 +161,8 @@ typedef struct {
+     ngx_addr_t                      *local;
+ 
+ #if (NGX_HTTP_CACHE)
+-    ngx_shm_zone_t                  *cache;
++    ngx_uint_t                       ncaches;
++    ngx_shm_zone_t                 **caches;
+ 
+     ngx_uint_t                       cache_min_uses;
+     ngx_uint_t                       cache_use_stale;
+Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_fastcgi_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
+@@ -310,7 +310,7 @@ static ngx_command_t  ngx_http_fastcgi_c
+ #if (NGX_HTTP_CACHE)
+ 
+     { ngx_string("fastcgi_cache"),
+-      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
++      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
+       ngx_http_fastcgi_cache,
+       NGX_HTTP_LOC_CONF_OFFSET,
+       0,
+@@ -1986,7 +1986,8 @@ ngx_http_fastcgi_create_loc_conf(ngx_con
+     conf->upstream.pass_request_body = NGX_CONF_UNSET;
+ 
+ #if (NGX_HTTP_CACHE)
+-    conf->upstream.cache = NGX_CONF_UNSET_PTR;
++    conf->upstream.caches = NGX_CONF_UNSET_PTR;
++    conf->upstream.ncaches = NGX_CONF_UNSET_UINT;
+     conf->upstream.cache_min_uses = NGX_CONF_UNSET_UINT;
+     conf->upstream.cache_bypass = NGX_CONF_UNSET_PTR;
+     conf->upstream.no_cache = NGX_CONF_UNSET_PTR;
+@@ -2179,19 +2180,27 @@ ngx_http_fastcgi_merge_loc_conf(ngx_conf
+ 
+ #if (NGX_HTTP_CACHE)
+ 
+-    ngx_conf_merge_ptr_value(conf->upstream.cache,
+-                              prev->upstream.cache, NULL);
++    ngx_conf_merge_ptr_value(conf->upstream.caches,
++                              prev->upstream.caches, NULL);
+ 
+-    if (conf->upstream.cache && conf->upstream.cache->data == NULL) {
+-        ngx_shm_zone_t  *shm_zone;
++    ngx_conf_merge_uint_value(conf->upstream.ncaches,
++                              prev->upstream.ncaches, 0);
+ 
+-        shm_zone = conf->upstream.cache;
+-
+-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+-                           "\"fastcgi_cache\" zone \"%V\" is unknown",
+-                           &shm_zone->shm.name);
++    if (conf->upstream.caches) {
++        for (i = 0; i < conf->upstream.ncaches; i++) {
++            if (conf->upstream.caches[i] &&
++                conf->upstream.caches[i]->data == NULL) {
++                ngx_shm_zone_t  *shm_zone;
++
++                shm_zone = conf->upstream.caches[i];
++
++                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
++                                   "\"fastcgi_cache\" zone \"%V\" is unknown",
++                                   &shm_zone->shm.name);
+ 
+-        return NGX_CONF_ERROR;
++                return NGX_CONF_ERROR;
++            }
++        }
+     }
+ 
+     ngx_conf_merge_uint_value(conf->upstream.cache_min_uses,
+@@ -2292,8 +2301,8 @@ ngx_http_fastcgi_merge_loc_conf(ngx_conf
+ 
+         if (conf->params_source == NULL) {
+ 
+-            if ((conf->upstream.cache == NULL)
+-                == (prev->upstream.cache == NULL))
++            if ((conf->upstream.caches == NULL)
++                == (prev->upstream.caches == NULL))
+             {
+                 return NGX_CONF_OK;
+             }
+@@ -2334,7 +2343,7 @@ ngx_http_fastcgi_merge_loc_conf(ngx_conf
+ 
+ #if (NGX_HTTP_CACHE)
+ 
+-    if (conf->upstream.cache) {
++    if (conf->upstream.caches) {
+         ngx_keyval_t  *h, *s;
+ 
+         for (h = ngx_http_fastcgi_cache_headers; h->key.len; h++) {
+@@ -2732,8 +2741,8 @@ ngx_http_fastcgi_store(ngx_conf_t *cf, n
+ 
+ #if (NGX_HTTP_CACHE)
+ 
+-    if (flcf->upstream.cache != NGX_CONF_UNSET_PTR
+-        && flcf->upstream.cache != NULL)
++    if (flcf->upstream.caches != NGX_CONF_UNSET_PTR
++        && flcf->upstream.caches != NULL)
+     {
+         return "is incompatible with \"fastcgi_cache\"";
+     }
+@@ -2774,15 +2783,16 @@ ngx_http_fastcgi_cache(ngx_conf_t *cf, n
+     ngx_http_fastcgi_loc_conf_t *flcf = conf;
+ 
+     ngx_str_t  *value;
++    ngx_uint_t  i;
+ 
+     value = cf->args->elts;
+ 
+-    if (flcf->upstream.cache != NGX_CONF_UNSET_PTR) {
++    if (flcf->upstream.caches != NGX_CONF_UNSET_PTR) {
+         return "is duplicate";
+     }
+ 
+     if (ngx_strcmp(value[1].data, "off") == 0) {
+-        flcf->upstream.cache = NULL;
++        flcf->upstream.caches = NULL;
+         return NGX_CONF_OK;
+     }
+ 
+@@ -2790,12 +2800,22 @@ ngx_http_fastcgi_cache(ngx_conf_t *cf, n
+         return "is incompatible with \"fastcgi_store\"";
+     }
+ 
+-    flcf->upstream.cache = ngx_shared_memory_add(cf, &value[1], 0,
+-                                                 &ngx_http_fastcgi_module);
+-    if (flcf->upstream.cache == NULL) {
++    flcf->upstream.ncaches = cf->args->nelts - 1;
++
++    flcf->upstream.caches = ngx_palloc(cf->pool,
++       sizeof(ngx_shm_zone_t *) * flcf->upstream.ncaches);
++    if (flcf->upstream.caches == NULL) {
+         return NGX_CONF_ERROR;
+     }
+ 
++    for (i = 0; i < flcf->upstream.ncaches; i++) {
++        flcf->upstream.caches[i] = ngx_shared_memory_add(cf, &value[1], 0,
++                                                    &ngx_http_fastcgi_module);
++        if (flcf->upstream.caches[i] == NULL) {
++            return NGX_CONF_ERROR;
++        }
++    }
++
+ #if (NGX_STATUS)
+     ngx_http_core_loc_conf_t  *clcf =
+ 	ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
+Index: nginx-catap/nginx/src/http/modules/ngx_http_scgi_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_scgi_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_scgi_module.c
+@@ -176,7 +176,7 @@ static ngx_command_t ngx_http_scgi_comma
+ #if (NGX_HTTP_CACHE)
+ 
+     { ngx_string("scgi_cache"),
+-      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
++      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
+       ngx_http_scgi_cache,
+       NGX_HTTP_LOC_CONF_OFFSET,
+       0,
+@@ -1015,7 +1015,8 @@ ngx_http_scgi_create_loc_conf(ngx_conf_t
+     conf->upstream.pass_request_body = NGX_CONF_UNSET;
+ 
+ #if (NGX_HTTP_CACHE)
+-    conf->upstream.cache = NGX_CONF_UNSET_PTR;
++    conf->upstream.caches = NGX_CONF_UNSET_PTR;
++    conf->upstream.ncaches = NGX_CONF_UNSET_UINT;
+     conf->upstream.cache_min_uses = NGX_CONF_UNSET_UINT;
+     conf->upstream.cache_bypass = NGX_CONF_UNSET_PTR;
+     conf->upstream.no_cache = NGX_CONF_UNSET_PTR;
+@@ -1204,19 +1205,27 @@ ngx_http_scgi_merge_loc_conf(ngx_conf_t 
+ 
+ #if (NGX_HTTP_CACHE)
+ 
+-    ngx_conf_merge_ptr_value(conf->upstream.cache,
+-                              prev->upstream.cache, NULL);
++    ngx_conf_merge_ptr_value(conf->upstream.caches,
++                              prev->upstream.caches, NULL);
+ 
+-    if (conf->upstream.cache && conf->upstream.cache->data == NULL) {
+-        ngx_shm_zone_t  *shm_zone;
++    ngx_conf_merge_uint_value(conf->upstream.ncaches,
++                              prev->upstream.ncaches, 0);
+ 
+-        shm_zone = conf->upstream.cache;
+-
+-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+-                           "\"scgi_cache\" zone \"%V\" is unknown",
+-                           &shm_zone->shm.name);
++    if (conf->upstream.caches) {
++        for (i = 0; i < conf->upstream.ncaches; i++) {
++            if (conf->upstream.caches[i] &&
++                conf->upstream.caches[i]->data == NULL) {
++                ngx_shm_zone_t  *shm_zone;
++
++                shm_zone = conf->upstream.caches[i];
++
++                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
++                                   "\"scgi_cache\" zone \"%V\" is unknown",
++                                   &shm_zone->shm.name);
+ 
+-        return NGX_CONF_ERROR;
++                return NGX_CONF_ERROR;
++            }
++        }
+     }
+ 
+     ngx_conf_merge_uint_value(conf->upstream.cache_min_uses,
+@@ -1299,8 +1308,8 @@ ngx_http_scgi_merge_loc_conf(ngx_conf_t 
+ 
+         if (conf->params_source == NULL) {
+ 
+-            if ((conf->upstream.cache == NULL)
+-                == (prev->upstream.cache == NULL))
++            if ((conf->upstream.caches == NULL)
++                == (prev->upstream.caches == NULL))
+             {
+                 return NGX_CONF_OK;
+             }
+@@ -1341,7 +1350,7 @@ ngx_http_scgi_merge_loc_conf(ngx_conf_t 
+ 
+ #if (NGX_HTTP_CACHE)
+ 
+-    if (conf->upstream.cache) {
++    if (conf->upstream.caches) {
+         ngx_keyval_t  *h, *s;
+ 
+         for (h = ngx_http_scgi_cache_headers; h->key.len; h++) {
+@@ -1558,8 +1567,8 @@ ngx_http_scgi_store(ngx_conf_t *cf, ngx_
+ 
+ #if (NGX_HTTP_CACHE)
+ 
+-    if (scf->upstream.cache != NGX_CONF_UNSET_PTR
+-        && scf->upstream.cache != NULL)
++    if (scf->upstream.caches != NGX_CONF_UNSET_PTR
++        && scf->upstream.caches != NULL)
+     {
+         return "is incompatible with \"scgi_cache\"";
+     }
+@@ -1600,15 +1609,16 @@ ngx_http_scgi_cache(ngx_conf_t *cf, ngx_
+     ngx_http_scgi_loc_conf_t *scf = conf;
+ 
+     ngx_str_t  *value;
++    ngx_uint_t  i;
+ 
+     value = cf->args->elts;
+ 
+-    if (scf->upstream.cache != NGX_CONF_UNSET_PTR) {
++    if (scf->upstream.caches != NGX_CONF_UNSET_PTR) {
+         return "is duplicate";
+     }
+ 
+     if (ngx_strcmp(value[1].data, "off") == 0) {
+-        scf->upstream.cache = NULL;
++        scf->upstream.caches = NULL;
+         return NGX_CONF_OK;
+     }
+ 
+@@ -1616,12 +1626,22 @@ ngx_http_scgi_cache(ngx_conf_t *cf, ngx_
+         return "is incompatible with \"scgi_store\"";
+     }
+ 
+-    scf->upstream.cache = ngx_shared_memory_add(cf, &value[1], 0,
+-                                                &ngx_http_scgi_module);
+-    if (scf->upstream.cache == NULL) {
++    scf->upstream.ncaches = cf->args->nelts - 1;
++
++    scf->upstream.caches = ngx_palloc(cf->pool,
++        sizeof(ngx_shm_zone_t *) * scf->upstream.ncaches);
++    if (scf->upstream.caches == NULL) {
+         return NGX_CONF_ERROR;
+     }
+ 
++    for (i = 0; i < scf->upstream.ncaches; i++) {
++        scf->upstream.caches[i] = ngx_shared_memory_add(cf, &value[1], 0,
++                                                    &ngx_http_scgi_module);
++        if (scf->upstream.caches[i] == NULL) {
++            return NGX_CONF_ERROR;
++        }
++    }
++
+ #if (NGX_STATUS)
+     ngx_http_core_loc_conf_t  *clcf =
+ 	ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
+Index: nginx-catap/nginx/src/http/modules/ngx_http_uwsgi_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_uwsgi_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_uwsgi_module.c
+@@ -203,7 +203,7 @@ static ngx_command_t ngx_http_uwsgi_comm
+ #if (NGX_HTTP_CACHE)
+ 
+     { ngx_string("uwsgi_cache"),
+-      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
++      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
+       ngx_http_uwsgi_cache,
+       NGX_HTTP_LOC_CONF_OFFSET,
+       0,
+@@ -1068,7 +1068,8 @@ ngx_http_uwsgi_create_loc_conf(ngx_conf_
+     conf->upstream.pass_request_body = NGX_CONF_UNSET;
+ 
+ #if (NGX_HTTP_CACHE)
+-    conf->upstream.cache = NGX_CONF_UNSET_PTR;
++    conf->upstream.caches = NGX_CONF_UNSET_PTR;
++    conf->upstream.ncaches = NGX_CONF_UNSET_UINT;
+     conf->upstream.cache_min_uses = NGX_CONF_UNSET_UINT;
+     conf->upstream.cache_bypass = NGX_CONF_UNSET_PTR;
+     conf->upstream.no_cache = NGX_CONF_UNSET_PTR;
+@@ -1257,19 +1258,27 @@ ngx_http_uwsgi_merge_loc_conf(ngx_conf_t
+ 
+ #if (NGX_HTTP_CACHE)
+ 
+-    ngx_conf_merge_ptr_value(conf->upstream.cache,
+-                              prev->upstream.cache, NULL);
++    ngx_conf_merge_ptr_value(conf->upstream.caches,
++                              prev->upstream.caches, NULL);
+ 
+-    if (conf->upstream.cache && conf->upstream.cache->data == NULL) {
+-        ngx_shm_zone_t  *shm_zone;
++    ngx_conf_merge_uint_value(conf->upstream.ncaches,
++                              prev->upstream.ncaches, 0);
+ 
+-        shm_zone = conf->upstream.cache;
+-
+-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+-                           "\"uwsgi_cache\" zone \"%V\" is unknown",
+-                           &shm_zone->shm.name);
++    if (conf->upstream.caches) {
++        for (i = 0; i < conf->upstream.ncaches; i++) {
++            if (conf->upstream.caches[i] &&
++                conf->upstream.caches[i]->data == NULL) {
++                ngx_shm_zone_t  *shm_zone;
++
++                shm_zone = conf->upstream.caches[i];
++
++                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
++                                   "\"uwsgi_cache\" zone \"%V\" is unknown",
++                                   &shm_zone->shm.name);
+ 
+-        return NGX_CONF_ERROR;
++                return NGX_CONF_ERROR;
++            }
++        }
+     }
+ 
+     ngx_conf_merge_uint_value(conf->upstream.cache_min_uses,
+@@ -1357,8 +1366,8 @@ ngx_http_uwsgi_merge_loc_conf(ngx_conf_t
+ 
+         if (conf->params_source == NULL) {
+ 
+-            if ((conf->upstream.cache == NULL)
+-                == (prev->upstream.cache == NULL))
++            if ((conf->upstream.caches == NULL)
++                == (prev->upstream.caches == NULL))
+             {
+                 return NGX_CONF_OK;
+             }
+@@ -1399,7 +1408,7 @@ ngx_http_uwsgi_merge_loc_conf(ngx_conf_t
+ 
+ #if (NGX_HTTP_CACHE)
+ 
+-    if (conf->upstream.cache) {
++    if (conf->upstream.caches) {
+         ngx_keyval_t  *h, *s;
+ 
+         for (h = ngx_http_uwsgi_cache_headers; h->key.len; h++) {
+@@ -1610,8 +1619,8 @@ ngx_http_uwsgi_store(ngx_conf_t *cf, ngx
+ 
+ #if (NGX_HTTP_CACHE)
+ 
+-    if (uwcf->upstream.cache != NGX_CONF_UNSET_PTR
+-        && uwcf->upstream.cache != NULL)
++    if (uwcf->upstream.caches != NGX_CONF_UNSET_PTR
++        && uwcf->upstream.caches != NULL)
+     {
+         return "is incompatible with \"uwsgi_cache\"";
+     }
+@@ -1652,15 +1661,16 @@ ngx_http_uwsgi_cache(ngx_conf_t *cf, ngx
+     ngx_http_uwsgi_loc_conf_t *uwcf = conf;
+ 
+     ngx_str_t  *value;
++    ngx_uint_t  i;
+ 
+     value = cf->args->elts;
+ 
+-    if (uwcf->upstream.cache != NGX_CONF_UNSET_PTR) {
++    if (uwcf->upstream.caches != NGX_CONF_UNSET_PTR) {
+         return "is duplicate";
+     }
+ 
+     if (ngx_strcmp(value[1].data, "off") == 0) {
+-        uwcf->upstream.cache = NULL;
++        uwcf->upstream.caches = NULL;
+         return NGX_CONF_OK;
+     }
+ 
+@@ -1668,12 +1678,22 @@ ngx_http_uwsgi_cache(ngx_conf_t *cf, ngx
+         return "is incompatible with \"uwsgi_store\"";
+     }
+ 
+-    uwcf->upstream.cache = ngx_shared_memory_add(cf, &value[1], 0,
+-                                                 &ngx_http_uwsgi_module);
+-    if (uwcf->upstream.cache == NULL) {
++    uwcf->upstream.ncaches = cf->args->nelts - 1;
++
++    uwcf->upstream.caches = ngx_palloc(cf->pool,
++        sizeof(ngx_shm_zone_t *) * uwcf->upstream.ncaches);
++    if (uwcf->upstream.caches == NULL) {
+         return NGX_CONF_ERROR;
+     }
+ 
++    for (i = 0; i < uwcf->upstream.ncaches; i++) {
++        uwcf->upstream.caches[i] = ngx_shared_memory_add(cf, &value[1], 0,
++                                                    &ngx_http_uwsgi_module);
++        if (uwcf->upstream.caches[i] == NULL) {
++            return NGX_CONF_ERROR;
++        }
++    }
++
+ #if (NGX_STATUS)
+     ngx_http_core_loc_conf_t  *clcf =
+ 	ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
