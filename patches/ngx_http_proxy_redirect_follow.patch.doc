@@ -1,0 +1,6 @@
+<h5>Описание&nbsp;директив:</h5> 
+
+<p><strong>syntax: </strong>proxy_redirect_follow <strong><em>[off | 301 | 302] [...]</em></strong><br><strong>default: </strong>proxy_redirect_follow off<br><strong>context: </strong>http, server, location<br><p> 
+
+<p>Директива определяет, в каких случаях переадресация будет выполнена на уровне сервера.</p>
+ 

@@ -17,3 +17,4 @@ ngx_addon's_if_statment.patch
 ngx_http_multi_map.patch
 ngx_http_rewrite_named.patch
 ngx_http_cache_multi_zone.patch
+ngx_http_proxy_redirect_follow.patch

@@ -1,0 +1,319 @@
+Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_proxy_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
+@@ -109,6 +109,9 @@ static ngx_int_t
+ static ngx_int_t ngx_http_proxy_rewrite_redirect(ngx_http_request_t *r,
+     ngx_table_elt_t *h, size_t prefix);
+ 
++static ngx_int_t ngx_http_proxy_redirect_follow(ngx_http_request_t *r,
++    ngx_str_t *uri);
++
+ static ngx_int_t ngx_http_proxy_add_variables(ngx_conf_t *cf);
+ static void *ngx_http_proxy_create_loc_conf(ngx_conf_t *cf);
+ static char *ngx_http_proxy_merge_loc_conf(ngx_conf_t *cf,
+@@ -156,6 +159,13 @@ static ngx_conf_bitmask_t  ngx_http_prox
+     { ngx_null_string, 0 }
+ };
+ 
++static ngx_conf_bitmask_t  ngx_http_proxy_redirect_follow_masks[] = {
++    { ngx_string("off"), NGX_HTTP_UPSTREAM_REDIRECT_FOLLOW_OFF },
++    { ngx_string("301"), NGX_HTTP_UPSTREAM_REDIRECT_FOLLOW_301 },
++    { ngx_string("302"), NGX_HTTP_UPSTREAM_REDIRECT_FOLLOW_302 },
++    { ngx_null_string, 0 }
++};
++
+ 
+ ngx_module_t  ngx_http_proxy_module;
+ 
+@@ -176,6 +186,13 @@ static ngx_command_t  ngx_http_proxy_com
+       0,
+       NULL },
+ 
++    { ngx_string("proxy_redirect_follow"),
++      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_1MORE,
++      ngx_conf_set_bitmask_slot,
++      NGX_HTTP_LOC_CONF_OFFSET,
++      offsetof(ngx_http_proxy_loc_conf_t, upstream.redirect_follow),
++      &ngx_http_proxy_redirect_follow_masks },
++
+     { ngx_string("proxy_store"),
+       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+       ngx_http_proxy_store,
+@@ -597,6 +614,7 @@ ngx_http_proxy_handler(ngx_http_request_
+     u->process_header = ngx_http_proxy_process_status_line;
+     u->abort_request = ngx_http_proxy_abort_request;
+     u->finalize_request = ngx_http_proxy_finalize_request;
++    u->redirect_follow = ngx_http_proxy_redirect_follow;
+     r->state = 0;
+ 
+     if (plcf->redirects) {
+@@ -1609,6 +1627,95 @@ ngx_http_proxy_rewrite_redirect_vars(ngx
+ 
+ 
+ static ngx_int_t
++ngx_http_proxy_redirect_follow(ngx_http_request_t *r, ngx_str_t *uri)
++{
++    ngx_url_t             url;
++
++    size_t                add;
++    u_short               port;
++
++    ngx_http_upstream_t  *u;
++    ngx_http_proxy_ctx_t *ctx;
++
++    ctx = ngx_http_get_module_ctx(r, ngx_http_proxy_module);
++
++    if (uri->len < 8) {
++        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
++                      "invalid URL for redirect follow \"%V\"", uri);
++	return NGX_ERROR;
++    }
++
++    if (ngx_strncasecmp(uri->data, (u_char *) "http://", 7) == 0) {
++
++        add = 7;
++        port = 80;
++
++#if (NGX_HTTP_SSL)
++
++    } else if (ngx_strncasecmp(uri->data, (u_char *) "https://", 8) == 0) {
++
++        add = 8;
++        port = 443;
++        r->upstream->ssl = 1;
++
++#endif
++
++    } else {
++        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
++                      "invalid URL for redirect follow \"%V\"", uri);
++        return NGX_ERROR;
++    }
++
++    u = r->upstream;
++
++    u->schema.len = add;
++    u->schema.data = uri->data;
++
++    ngx_memzero(&url, sizeof(ngx_url_t));
++
++    url.url.len = uri->len - add;
++    url.url.data = uri->data + add;
++    url.default_port = port;
++    url.uri_part = 1;
++    url.no_resolve = 1;
++
++    if (ngx_parse_url(r->pool, &url) != NGX_OK) {
++        if (url.err) {
++            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
++                          "%s in upstream \"%V\"", url.err, &url.url);
++        }
++
++        return NGX_ERROR;
++    }
++
++    url.uri = *uri;
++
++    ctx->vars.key_start = u->schema;
++
++    ngx_http_proxy_set_vars(&url, &ctx->vars);
++
++    u->resolved = ngx_pcalloc(r->pool, sizeof(ngx_http_upstream_resolved_t));
++    if (u->resolved == NULL) {
++        return NGX_ERROR;
++    }
++
++    if (url.addrs && url.addrs[0].sockaddr) {
++        u->resolved->sockaddr = url.addrs[0].sockaddr;
++        u->resolved->socklen = url.addrs[0].socklen;
++        u->resolved->naddrs = 1;
++        u->resolved->host = url.addrs[0].name;
++
++    } else {
++        u->resolved->host = url.host;
++        u->resolved->port = (in_port_t) (url.no_port ? port : url.port);
++        u->resolved->no_port = url.no_port;
++    }
++
++    return NGX_OK;
++}
++
++
++static ngx_int_t
+ ngx_http_proxy_add_variables(ngx_conf_t *cf)
+ {
+     ngx_http_variable_t  *var, *v;
+@@ -1651,6 +1758,7 @@ ngx_http_proxy_create_loc_conf(ngx_conf_
+      *     conf->upstream.location = NULL;
+      *     conf->upstream.store_lengths = NULL;
+      *     conf->upstream.store_values = NULL;
++     *     conf->upstream.redirect_follow = 0;
+      *
+      *     conf->method = NULL;
+      *     conf->headers_source = NULL;
+@@ -1966,6 +2074,16 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
+ 
+     ngx_conf_merge_value(conf->redirect, prev->redirect, 1);
+ 
++    ngx_conf_merge_bitmask_value(conf->upstream.redirect_follow,
++                              prev->upstream.redirect_follow,
++                              (NGX_CONF_BITMASK_SET
++                               |NGX_HTTP_UPSTREAM_REDIRECT_FOLLOW_OFF));
++
++    if (conf->upstream.redirect_follow & NGX_HTTP_UPSTREAM_REDIRECT_FOLLOW_OFF) {
++        conf->upstream.redirect_follow = NGX_CONF_BITMASK_SET
++                                         |NGX_HTTP_UPSTREAM_REDIRECT_FOLLOW_OFF;
++    }
++
+     if (conf->redirect) {
+ 
+         if (conf->redirects == NULL) {
+Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream.c
++++ nginx-catap/nginx/src/http/ngx_http_upstream.c
+@@ -41,6 +41,8 @@ static void ngx_http_upstream_process_he
+     ngx_http_upstream_t *u);
+ static ngx_int_t ngx_http_upstream_test_next(ngx_http_request_t *r,
+     ngx_http_upstream_t *u);
++static ngx_int_t ngx_http_upstream_redirect_follow(ngx_http_request_t *r,
++    ngx_http_upstream_t *u);
+ static ngx_int_t ngx_http_upstream_intercept_errors(ngx_http_request_t *r,
+     ngx_http_upstream_t *u);
+ static ngx_int_t ngx_http_upstream_test_connect(ngx_connection_t *c);
+@@ -1643,6 +1645,10 @@ ngx_http_upstream_process_header(ngx_htt
+             return;
+         }
+ 
++	if (ngx_http_upstream_redirect_follow(r, u) == NGX_OK) {
++	    return;
++	}
++
+         if (ngx_http_upstream_intercept_errors(r, u) == NGX_OK) {
+             return;
+         }
+@@ -1740,6 +1746,89 @@ ngx_http_upstream_test_next(ngx_http_req
+ 
+ 
+ static ngx_int_t
++ngx_http_upstream_redirect_follow(ngx_http_request_t *r, ngx_http_upstream_t *u)
++{
++    ngx_str_t uri;
++
++    if (u->conf->redirect_follow & NGX_HTTP_UPSTREAM_REDIRECT_FOLLOW_OFF) {
++	return NGX_DECLINED;
++    }
++
++    if (u->headers_in.status_n == NGX_HTTP_MOVED_PERMANENTLY
++        && !(u->conf->redirect_follow & NGX_HTTP_UPSTREAM_REDIRECT_FOLLOW_301)) {
++	return NGX_DECLINED;
++    }
++
++    if (u->headers_in.status_n == NGX_HTTP_MOVED_TEMPORARILY
++        && !(u->conf->redirect_follow & NGX_HTTP_UPSTREAM_REDIRECT_FOLLOW_302)) {
++	return NGX_DECLINED;
++    }
++
++    /* close old connection */
++    if (u->peer.connection) {
++        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
++                       "close http upstream connection: %d",
++                       u->peer.connection->fd);
++#if (NGX_HTTP_SSL)
++
++        if (u->peer.connection->ssl) {
++            u->peer.connection->ssl->no_wait_shutdown = 1;
++            u->peer.connection->ssl->no_send_shutdown = 1;
++
++            (void) ngx_ssl_shutdown(u->peer.connection);
++        }
++#endif
++
++        ngx_close_connection(u->peer.connection);
++    }
++
++    if (u->headers_in.location == NULL) {
++        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
++                      "not found location header");
++        ngx_http_upstream_finalize_request(r, u, NGX_HTTP_INTERNAL_SERVER_ERROR);
++        return NGX_OK;
++    }
++
++    uri = u->headers_in.location->value;
++
++    if (ngx_http_upstream_create(r) != NGX_OK) {
++        ngx_http_upstream_finalize_request(r, u, NGX_HTTP_INTERNAL_SERVER_ERROR);
++        return NGX_OK;
++    }
++
++    if (u->redirect_follow(r, &uri) != NGX_OK) {
++        ngx_http_upstream_finalize_request(r, u, NGX_HTTP_INTERNAL_SERVER_ERROR);
++        return NGX_OK;
++    }
++
++    r->upstream->output.tag = u->output.tag;
++    r->upstream->conf = u->conf;
++#if (NGX_HTTP_CACHE)
++    r->upstream->create_key = u->create_key;
++#endif
++    r->upstream->create_request = u->create_request;
++    r->upstream->reinit_request = u->reinit_request;
++    r->upstream->process_header = u->process_header;
++    r->upstream->abort_request = u->abort_request;
++    r->upstream->finalize_request = u->finalize_request;
++    r->upstream->redirect_follow = u->redirect_follow;
++    r->upstream->rewrite_redirect = u->rewrite_redirect;
++
++    r->upstream->buffering = u->buffering;
++
++    r->upstream->pipe = u->pipe;
++
++    r->upstream->accel = u->accel;
++
++    r->state = 0;
++
++    ngx_http_upstream_init(r);
++
++    return NGX_OK;
++}
++
++
++static ngx_int_t
+ ngx_http_upstream_intercept_errors(ngx_http_request_t *r,
+     ngx_http_upstream_t *u)
+ {
+Index: nginx-catap/nginx/src/http/ngx_http_upstream.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream.h
++++ nginx-catap/nginx/src/http/ngx_http_upstream.h
+@@ -46,6 +46,11 @@
+ #define NGX_HTTP_UPSTREAM_IGN_SET_COOKIE     0x00000020
+ 
+ 
++#define NGX_HTTP_UPSTREAM_REDIRECT_FOLLOW_OFF  0x0002
++#define NGX_HTTP_UPSTREAM_REDIRECT_FOLLOW_301  0x0004
++#define NGX_HTTP_UPSTREAM_REDIRECT_FOLLOW_302  0x0008
++
++
+ typedef struct {
+     ngx_msec_t                       bl_time;
+     ngx_uint_t                       bl_state;
+@@ -191,6 +196,8 @@ typedef struct {
+     ngx_flag_t                       ssl_session_reuse;
+ #endif
+ 
++    ngx_uint_t                       redirect_follow;
++
+ } ngx_http_upstream_conf_t;
+ 
+ 
+@@ -299,6 +306,8 @@ struct ngx_http_upstream_s {
+                                          ngx_int_t rc);
+     ngx_int_t                      (*rewrite_redirect)(ngx_http_request_t *r,
+                                          ngx_table_elt_t *h, size_t prefix);
++    ngx_int_t                      (*redirect_follow)(ngx_http_request_t *r,
++                                         ngx_str_t *uri);
+ 
+     ngx_msec_t                       timeout;
+ 
