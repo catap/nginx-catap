@@ -1030,7 +1030,7 @@ Index: nginx-catap/nginx/src/core/ngx_rbtreehash.c
 ===================================================================
 --- /dev/null
 +++ nginx-catap/nginx/src/core/ngx_rbtreehash.c
-@@ -0,0 +1,693 @@
+@@ -0,0 +1,696 @@
 +
 +/*
 + * Copyright (C) Kirill A. Korinskiy
@@ -1597,7 +1597,7 @@ Index: nginx-catap/nginx/src/core/ngx_rbtreehash.c
 +    key = ngx_array_push(&ctx->keys);
 +    ngx_memzero(key, ctx->keys.size);
 +    for (ptr_last = ptr = data.data, ptr_end = data.data + data.len
-+	     ; ptr < ptr_end; ptr++) {
++	     ; ptr <= ptr_end; ptr++) {
 +	switch (*ptr) {
 +	case ' ':
 +	    {
@@ -1624,8 +1624,11 @@ Index: nginx-catap/nginx/src/core/ngx_rbtreehash.c
 +		ptr_last = ptr;
 +		break;
 +	    }
-+	case '\n':
++        default:
 +	    {
++		if (*ptr != '\n' && ptr != ptr_end) {
++		    continue;
++		}
 +		if (key->key.data == NULL) {
 +		    key->key.len = ptr - ptr_last;
 +		    key->key.data = ngx_palloc(ctx->pool, key->key.len);
