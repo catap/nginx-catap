@@ -103,7 +103,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_empty_gif_module.c
 -    ngx_int_t                 rc;
 -    ngx_http_complex_value_t  cv;
 +    ngx_int_t                       rc;
-+    ngx_buf_t                      *b;
++    ngx_buf_t                      *b = NULL;
 +    ngx_uint_t                      i, out_count;
 +    ngx_chain_t                    *out;
 +    ngx_http_complex_value_t        cv;
