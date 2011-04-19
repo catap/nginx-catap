@@ -1,0 +1,67 @@
+Index: nginx-catap/nginx/src/core/ngx_log.c
+===================================================================
+--- nginx-catap.orig/nginx/src/core/ngx_log.c
++++ nginx-catap/nginx/src/core/ngx_log.c
+@@ -139,7 +139,11 @@ ngx_log_error_core(ngx_uint_t level, ngx
+ 
+     ngx_linefeed(p);
+ 
+-    (void) ngx_write_fd(log->file->fd, errstr, p - errstr);
++    if ((!log->last_write_log_time ||
++	 ngx_time() - log->last_write_log_time > log->write_retry_period)
++	&& ngx_write_fd(log->file->fd, errstr, p - errstr) == -1) {
++        log->last_write_log_time = ngx_time();
++    }
+ 
+     if (!ngx_use_stderr
+         || level > NGX_LOG_WARN
+@@ -431,6 +435,9 @@ ngx_error_log(ngx_conf_t *cf, ngx_comman
+ 
+     value = cf->args->elts;
+ 
++    cf->cycle->new_log.last_write_log_time = 0;
++    cf->cycle->new_log.write_retry_period = NGX_ERROR;
++
+     if (ngx_strcmp(value[1].data, "stderr") == 0) {
+         ngx_str_null(&name);
+ 
+@@ -443,12 +450,23 @@ ngx_error_log(ngx_conf_t *cf, ngx_comman
+         return NULL;
+     }
+ 
++    cf->cycle->new_log.log_level = 0;
++
+     if (cf->args->nelts == 2) {
+         cf->cycle->new_log.log_level = NGX_LOG_ERR;
+-        return NGX_CONF_OK;
+     }
+ 
+-    cf->cycle->new_log.log_level = 0;
++    if (cf->args->nelts > 3) {
++        cf->cycle->new_log.write_retry_period = ngx_atoi(value[2].data, value[2].len);
++    }
++
++    if (cf->cycle->new_log.write_retry_period == NGX_ERROR) {
++	cf->cycle->new_log.write_retry_period = 30;
++    }
++
++    if (cf->cycle->new_log.log_level == NGX_LOG_ERR) {
++        return NGX_CONF_OK;
++    }
+ 
+     return ngx_log_set_levels(cf, &cf->cycle->new_log);
+ }
+Index: nginx-catap/nginx/src/core/ngx_log.h
+===================================================================
+--- nginx-catap.orig/nginx/src/core/ngx_log.h
++++ nginx-catap/nginx/src/core/ngx_log.h
+@@ -60,6 +60,9 @@ struct ngx_log_s {
+      */
+ 
+     char                *action;
++
++    time_t               last_write_log_time;
++    ngx_int_t            write_retry_period;
+ };
+ 
+ 
