@@ -424,7 +424,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_variables.c
 +
 +    if (r->headers_out.etag_size >= 0 &&
 +        r->headers_out.etag_time >= 0 &&
-+        (ngx_int_t)r->headers_out.etag_uniq >= 0) {
++        r->headers_out.etag_uniq) {
 +        p = ngx_pnalloc(r->pool,
 +                   sizeof("ETag: ") - 1 + NGX_OFF_T_LEN + sizeof("_") - 1
 +                   + NGX_TIME_T_LEN + sizeof("_") - 1 + NGX_INT_T_LEN);
