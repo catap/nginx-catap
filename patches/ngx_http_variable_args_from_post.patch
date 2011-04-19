@@ -1,0 +1,279 @@
+Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_core_module.c
++++ nginx-catap/nginx/src/http/ngx_http_core_module.c
+@@ -25,6 +25,7 @@ static ngx_int_t ngx_http_core_find_stat
+     ngx_http_location_tree_node_t *node);
+ 
+ static ngx_int_t ngx_http_core_preconfiguration(ngx_conf_t *cf);
++static ngx_int_t ngx_http_core_postconfiguration(ngx_conf_t *cf);
+ static void *ngx_http_core_create_main_conf(ngx_conf_t *cf);
+ static char *ngx_http_core_init_main_conf(ngx_conf_t *cf, void *conf);
+ static void *ngx_http_core_create_srv_conf(ngx_conf_t *cf);
+@@ -34,6 +35,9 @@ static void *ngx_http_core_create_loc_co
+ static char *ngx_http_core_merge_loc_conf(ngx_conf_t *cf,
+     void *parent, void *child);
+ 
++static ngx_int_t ngx_http_core_read_request_body(ngx_http_request_t *r);
++
++
+ static char *ngx_http_core_server(ngx_conf_t *cf, ngx_command_t *cmd,
+     void *dummy);
+ static char *ngx_http_core_location(ngx_conf_t *cf, ngx_command_t *cmd,
+@@ -179,6 +183,15 @@ static ngx_str_t  ngx_http_gzip_private 
+ 
+ #endif
+ 
++static ngx_conf_enum_t  ngx_http_use_args_from_post[] = {
++    { ngx_string("off"), NGX_HTTP_USE_ARGS_FROM_POST_OFF },
++    { ngx_string("on"), NGX_HTTP_USE_ARGS_FROM_POST_LAST },
++    { ngx_string("first"), NGX_HTTP_USE_ARGS_FROM_POST_FIRST },
++    { ngx_string("last"), NGX_HTTP_USE_ARGS_FROM_POST_LAST },
++    { ngx_null_string, 0 }
++};
++
++
+ 
+ static ngx_command_t  ngx_http_core_commands[] = {
+ 
+@@ -711,6 +724,14 @@ static ngx_command_t  ngx_http_core_comm
+       offsetof(ngx_http_core_loc_conf_t, resolver_timeout),
+       NULL },
+ 
++    { ngx_string("use_args_from_post"),
++      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
++      ngx_conf_set_enum_slot,
++      NGX_HTTP_LOC_CONF_OFFSET,
++      offsetof(ngx_http_core_loc_conf_t, use_args_from_post),
++      &ngx_http_use_args_from_post },
++
++
+ #if (NGX_HTTP_GZIP)
+ 
+     { ngx_string("gzip_vary"),
+@@ -760,7 +781,7 @@ static ngx_command_t  ngx_http_core_comm
+ 
+ static ngx_http_module_t  ngx_http_core_module_ctx = {
+     ngx_http_core_preconfiguration,        /* preconfiguration */
+-    NULL,                                  /* postconfiguration */
++    ngx_http_core_postconfiguration,       /* postconfiguration */
+ 
+     ngx_http_core_create_main_conf,        /* create main configuration */
+     ngx_http_core_init_main_conf,          /* init main configuration */
+@@ -3164,6 +3185,23 @@ ngx_http_core_preconfiguration(ngx_conf_
+     return ngx_http_variables_add_core_vars(cf);
+ }
+ 
++static ngx_int_t
++ngx_http_core_postconfiguration(ngx_conf_t *cf)
++{
++    ngx_http_handler_pt        *h;
++    ngx_http_core_main_conf_t  *cmcf;
++
++    cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
++
++    h = ngx_array_push(&cmcf->phases[NGX_HTTP_POST_READ_PHASE].handlers);
++    if (h == NULL) {
++        return NGX_ERROR;
++    }
++
++    *h = ngx_http_core_read_request_body;
++
++    return NGX_OK;
++}
+ 
+ static void *
+ ngx_http_core_create_main_conf(ngx_conf_t *cf)
+@@ -3332,6 +3370,7 @@ ngx_http_core_merge_srv_conf(ngx_conf_t 
+         return NGX_CONF_ERROR;
+     }
+ 
++
+     return NGX_CONF_OK;
+ }
+ 
+@@ -3427,6 +3466,8 @@ ngx_http_core_create_loc_conf(ngx_conf_t
+ #endif
+ #endif
+ 
++    clcf->use_args_from_post = NGX_CONF_UNSET;
++
+     return clcf;
+ }
+ 
+@@ -3671,6 +3712,7 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
+ 
+     ngx_conf_merge_sec_value(conf->open_file_cache_events,
+                               prev->open_file_cache_events, 0);
++
+ #if (NGX_HTTP_GZIP)
+ 
+     ngx_conf_merge_value(conf->gzip_vary, prev->gzip_vary, 0);
+@@ -3707,10 +3749,46 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
+     }
+ #endif
+ 
++    ngx_conf_merge_uint_value(conf->use_args_from_post, prev->use_args_from_post,
++                              NGX_HTTP_USE_ARGS_FROM_POST_LAST);
++
+     return NGX_CONF_OK;
+ }
+ 
+ 
++static ngx_int_t
++ngx_http_core_read_request_body(ngx_http_request_t *r)
++{
++    ngx_int_t rc;
++
++    ngx_http_core_loc_conf_t   *clcf;
++
++    clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
++
++    if (clcf->use_args_from_post == NGX_HTTP_USE_ARGS_FROM_POST_OFF) {
++        return NGX_DECLINED;
++    }
++
++    if (r->method != NGX_HTTP_POST) {
++        return NGX_DECLINED;
++    }
++
++    if (!r->headers_in.content_length_n || r->request_body) {
++        return NGX_DECLINED;
++    }
++
++    r->request_body_in_single_buf = 1;
++
++    rc = ngx_http_read_client_request_body(r, ngx_http_core_run_phases);
++
++    if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
++        return rc;
++    }
++
++    return NGX_DONE;
++}
++
++
+ static char *
+ ngx_http_core_listen(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+ {
+Index: nginx-catap/nginx/src/http/ngx_http_core_module.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_core_module.h
++++ nginx-catap/nginx/src/http/ngx_http_core_module.h
+@@ -37,6 +37,13 @@
+ #define NGX_HTTP_IMS_EXACT              1
+ #define NGX_HTTP_IMS_BEFORE             2
+ 
++#define NGX_HTTP_IMS_OFF                0
++#define NGX_HTTP_IMS_EXACT              1
++#define NGX_HTTP_IMS_BEFORE             2
++
++#define NGX_HTTP_USE_ARGS_FROM_POST_OFF   0
++#define NGX_HTTP_USE_ARGS_FROM_POST_LAST  1
++#define NGX_HTTP_USE_ARGS_FROM_POST_FIRST 2
+ 
+ #define NGX_HTTP_KEEPALIVE_DISABLE_NONE    0x0002
+ #define NGX_HTTP_KEEPALIVE_DISABLE_MSIE6   0x0004
+@@ -423,6 +430,8 @@ struct ngx_http_core_loc_conf_s {
+     ngx_status_counter_t **status_counters;
+ #endif
+ 
++    ngx_uint_t    use_args_from_post;
++
+ #if 0
+     ngx_http_core_loc_conf_t  *prev_location;
+ #endif
+Index: nginx-catap/nginx/src/http/ngx_http_parse.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_parse.c
++++ nginx-catap/nginx/src/http/ngx_http_parse.c
+@@ -1656,17 +1656,17 @@ ngx_http_parse_multi_header_lines(ngx_ar
+ }
+ 
+ 
+-ngx_int_t
+-ngx_http_arg(ngx_http_request_t *r, u_char *name, size_t len, ngx_str_t *value)
++static ngx_int_t
++ngx_http_find_arg(ngx_str_t *str, u_char *name, size_t len, ngx_str_t *value)
+ {
+     u_char  *p, *last;
+ 
+-    if (r->args.len == 0) {
++    if (str->len == 0) {
+         return NGX_DECLINED;
+     }
+ 
+-    p = r->args.data;
+-    last = p + r->args.len;
++    p = str->data;
++    last = p + str->len;
+ 
+     for ( /* void */ ; p < last; p++) {
+ 
+@@ -1678,14 +1678,14 @@ ngx_http_arg(ngx_http_request_t *r, u_ch
+             return NGX_DECLINED;
+         }
+ 
+-        if ((p == r->args.data || *(p - 1) == '&') && *(p + len) == '=') {
++        if ((p == str->data || *(p - 1) == '&') && *(p + len) == '=') {
+ 
+             value->data = p + len + 1;
+ 
+             p = ngx_strlchr(p, last, '&');
+ 
+             if (p == NULL) {
+-                p = r->args.data + r->args.len;
++                p = str->data + str->len;
+             }
+ 
+             value->len = p - value->data;
+@@ -1697,6 +1697,49 @@ ngx_http_arg(ngx_http_request_t *r, u_ch
+     return NGX_DECLINED;
+ }
+ 
++ngx_int_t
++ngx_http_arg(ngx_http_request_t *r, u_char *name, size_t len, ngx_str_t *value)
++{
++    ngx_int_t  rc;
++    ngx_str_t  post;
++
++    ngx_http_core_loc_conf_t  *clcf;
++
++    clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
++
++    /* r->main because all subrequests is GET */
++    if (r->main->method == NGX_HTTP_POST &&
++        r->request_body) {
++        post.data = r->request_body->buf->start;
++        post.len = r->headers_in.content_length_n;
++    } else {
++        post.len = 0;
++    }
++
++    if (post.len &&
++        clcf->use_args_from_post == NGX_HTTP_USE_ARGS_FROM_POST_FIRST) {
++        rc = ngx_http_find_arg(&post, name, len, value);
++        if (rc != NGX_DECLINED) {
++            return rc;
++        }
++    }
++
++    rc = ngx_http_find_arg(&r->args, name, len, value);
++    if (rc != NGX_DECLINED) {
++        return rc;
++    }
++
++    if (post.len &&
++        clcf->use_args_from_post == NGX_HTTP_USE_ARGS_FROM_POST_LAST) {
++        rc = ngx_http_find_arg(&post, name, len, value);
++        if (rc != NGX_DECLINED) {
++            return rc;
++        }
++    }
++
++    return NGX_DECLINED;
++}
++
+ 
+ void
+ ngx_http_split_args(ngx_http_request_t *r, ngx_str_t *uri, ngx_str_t *args)
