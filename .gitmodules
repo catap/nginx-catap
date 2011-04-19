@@ -16,3 +16,6 @@
 [submodule "modules/ngx_http_hash"]
 	path = modules/ngx_http_hash
 	url = git://github.com/catap/ngx_http_hash.git
+[submodule "modules/ngx_http_limit_var_module"]
+	path = modules/ngx_http_limit_var_module
+	url = git://github.com/catap/ngx_http_limit_var_module.git
