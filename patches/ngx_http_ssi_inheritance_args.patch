@@ -1,0 +1,15 @@
+Index: nginx-catap/nginx/src/http/modules/ngx_http_ssi_filter_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_ssi_filter_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_ssi_filter_module.c
+@@ -1959,6 +1959,10 @@ ngx_http_ssi_include(ngx_http_request_t 
+         return NGX_HTTP_SSI_ERROR;
+     }
+ 
++    if (file && !args.len) {
++        args = r->args;
++    }
++
+     psr = NULL;
+ 
+     mctx = ngx_http_get_module_ctx(r->main, ngx_http_ssi_filter_module);
