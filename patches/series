@@ -22,3 +22,4 @@ ngx_http_variable_args_from_post.patch
 stop_log_write_as_disc_issue.patch
 ngx_http_variable_ssi.patch
 ngx_http_ssi_inheritance_args.patch
+ngx_http_ssi_for.patch
