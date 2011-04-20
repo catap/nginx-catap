@@ -1,0 +1,363 @@
+Index: nginx-catap/nginx/src/http/modules/ngx_http_ssi_filter_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_ssi_filter_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_ssi_filter_module.c
+@@ -74,8 +74,6 @@ static void ngx_http_ssi_buffered(ngx_ht
+     ngx_http_ssi_ctx_t *ctx);
+ static ngx_int_t ngx_http_ssi_parse(ngx_http_request_t *r,
+     ngx_http_ssi_ctx_t *ctx);
+-static ngx_str_t *ngx_http_ssi_get_variable(ngx_http_request_t *r,
+-    ngx_str_t *name, ngx_uint_t key);
+ static ngx_int_t ngx_http_ssi_evaluate_string(ngx_http_request_t *r,
+     ngx_http_ssi_ctx_t *ctx, ngx_str_t *text, ngx_uint_t flags);
+ 
+@@ -83,7 +81,7 @@ static ngx_int_t ngx_http_ssi_include(ng
+     ngx_http_ssi_ctx_t *ctx, ngx_str_t **params);
+ static ngx_int_t ngx_http_ssi_stub_output(ngx_http_request_t *r, void *data,
+     ngx_int_t rc);
+-static ngx_int_t ngx_http_ssi_set_variable(ngx_http_request_t *r, void *data,
++static ngx_int_t ngx_http_ssi_set_included_variable(ngx_http_request_t *r, void *data,
+     ngx_int_t rc);
+ static ngx_int_t ngx_http_ssi_echo(ngx_http_request_t *r,
+     ngx_http_ssi_ctx_t *ctx, ngx_str_t **params);
+@@ -1521,22 +1519,26 @@ ngx_http_ssi_parse(ngx_http_request_t *r
+ }
+ 
+ 
+-static ngx_str_t *
++ngx_str_t *
+ ngx_http_ssi_get_variable(ngx_http_request_t *r, ngx_str_t *name,
+-    ngx_uint_t key)
++    ngx_uint_t *key)
+ {
+     ngx_uint_t           i;
+     ngx_list_part_t     *part;
+     ngx_http_ssi_var_t  *var;
+-    ngx_http_ssi_ctx_t  *ctx;
++    ngx_http_ssi_ctx_t  *mctx;
+ 
+-    ctx = ngx_http_get_module_ctx(r->main, ngx_http_ssi_filter_module);
++    if (*key == 0) {
++	*key = ngx_hash_strlow(name->data, name->data, name->len);
++    }
++
++    mctx = ngx_http_get_module_ctx(r->main, ngx_http_ssi_filter_module);
+ 
+-    if (ctx->variables == NULL) {
++    if (mctx->variables == NULL) {
+         return NULL;
+     }
+ 
+-    part = &ctx->variables->part;
++    part = &mctx->variables->part;
+     var = part->elts;
+ 
+     for (i = 0; /* void */ ; i++) {
+@@ -1555,7 +1557,7 @@ ngx_http_ssi_get_variable(ngx_http_reque
+             continue;
+         }
+ 
+-        if (key != var[i].key) {
++        if (*key != var[i].key) {
+             continue;
+         }
+ 
+@@ -1568,6 +1570,47 @@ ngx_http_ssi_get_variable(ngx_http_reque
+ }
+ 
+ 
++ngx_str_t *
++ngx_http_ssi_set_variable(ngx_http_request_t *r, ngx_str_t *name,
++    ngx_uint_t *key, ngx_str_t *value)
++{
++    ngx_str_t           *vv;
++    ngx_http_ssi_var_t  *var;
++    ngx_http_ssi_ctx_t  *mctx;
++
++    mctx = ngx_http_get_module_ctx(r->main, ngx_http_ssi_filter_module);
++
++    if (mctx == NULL) {
++        return NULL;
++    }
++
++    if (mctx->variables == NULL) {
++        mctx->variables = ngx_list_create(r->main->pool, 4,
++                                          sizeof(ngx_http_ssi_var_t));
++        if (mctx->variables == NULL) {
++            return NULL;
++        }
++    }
++
++    vv = ngx_http_ssi_get_variable(r, name, key);
++    if (vv) {
++        *vv = *value;
++        return vv;
++    }
++
++    var = ngx_list_push(mctx->variables);
++    if (var == NULL) {
++        return NULL;
++    }
++
++    var->name = *name;
++    var->key = *key;
++    var->value = *value;
++
++    return &var->value;
++}
++
++
+ static ngx_int_t
+ ngx_http_ssi_evaluate_string(ngx_http_request_t *r, ngx_http_ssi_ctx_t *ctx,
+     ngx_str_t *text, ngx_uint_t flags)
+@@ -1575,8 +1618,7 @@ ngx_http_ssi_evaluate_string(ngx_http_re
+     u_char                      ch, *p, **value, *data, *part_data;
+     size_t                     *size, len, prefix, part_len;
+     ngx_str_t                   var, *val;
+-    ngx_int_t                   key;
+-    ngx_uint_t                  i, n, bracket, quoted;
++    ngx_uint_t                  i, n, bracket, quoted, key = 0;
+     ngx_array_t                 lengths, values;
+     ngx_http_variable_value_t  *vv;
+ 
+@@ -1704,7 +1746,7 @@ ngx_http_ssi_evaluate_string(ngx_http_re
+ 
+             key = ngx_hash_strlow(var.data, var.data, var.len);
+ 
+-            val = ngx_http_ssi_get_variable(r, &var, key);
++            val = ngx_http_ssi_get_variable(r, &var, &key);
+ 
+             if (val == NULL) {
+                 vv = ngx_http_get_variable(r, &var, key);
+@@ -1826,13 +1868,12 @@ ngx_http_ssi_include(ngx_http_request_t 
+ {
+     u_char                      *dst, *src;
+     size_t                       len;
+-    ngx_int_t                    rc, key;
++    ngx_int_t                    rc;
+     ngx_str_t                   *uri, *file, *wait, *set, *stub, args;
+     ngx_buf_t                   *b;
+-    ngx_uint_t                   flags, i;
++    ngx_uint_t                   flags, i, key;
+     ngx_chain_t                 *cl, *tl, **ll, *out;
+     ngx_http_request_t          *sr;
+-    ngx_http_ssi_var_t          *var;
+     ngx_http_ssi_ctx_t          *mctx;
+     ngx_http_ssi_block_t        *bl;
+     ngx_http_post_subrequest_t  *psr;
+@@ -2001,28 +2042,12 @@ ngx_http_ssi_include(ngx_http_request_t 
+             return NGX_ERROR;
+         }
+ 
+-        psr->handler = ngx_http_ssi_set_variable;
+-        psr->data = ngx_http_ssi_get_variable(r, set, key);
++        psr->handler = ngx_http_ssi_set_included_variable;
++        psr->data = ngx_http_ssi_get_variable(r, set, &key);
+ 
+         if (psr->data == NULL) {
+-
+-            if (mctx->variables == NULL) {
+-                mctx->variables = ngx_list_create(r->pool, 4,
+-                                                  sizeof(ngx_http_ssi_var_t));
+-                if (mctx->variables == NULL) {
+-                    return NGX_ERROR;
+-                }
+-            }
+-
+-            var = ngx_list_push(mctx->variables);
+-            if (var == NULL) {
+-                return NGX_ERROR;
+-            }
+-
+-            var->name = *set;
+-            var->key = key;
+-            var->value = ngx_http_ssi_null_string;
+-            psr->data = &var->value;
++            psr->data = ngx_http_ssi_set_variable(r, set, &key,
++                                                  &ngx_http_ssi_null_string);
+         }
+ 
+         flags |= NGX_HTTP_SUBREQUEST_IN_MEMORY|NGX_HTTP_SUBREQUEST_WAITED;
+@@ -2079,7 +2104,7 @@ ngx_http_ssi_stub_output(ngx_http_reques
+ 
+ 
+ static ngx_int_t
+-ngx_http_ssi_set_variable(ngx_http_request_t *r, void *data, ngx_int_t rc)
++ngx_http_ssi_set_included_variable(ngx_http_request_t *r, void *data, ngx_int_t rc)
+ {
+     ngx_str_t  *value = data;
+ 
+@@ -2098,9 +2123,9 @@ ngx_http_ssi_echo(ngx_http_request_t *r,
+ {
+     u_char                     *p;
+     uintptr_t                   len;
+-    ngx_int_t                   key;
+     ngx_buf_t                  *b;
+     ngx_str_t                  *var, *value, *enc, text;
++    ngx_uint_t                  key = 0;
+     ngx_chain_t                *cl;
+     ngx_http_variable_value_t  *vv;
+ 
+@@ -2109,9 +2134,7 @@ ngx_http_ssi_echo(ngx_http_request_t *r,
+     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                    "ssi echo \"%V\"", var);
+ 
+-    key = ngx_hash_strlow(var->data, var->data, var->len);
+-
+-    value = ngx_http_ssi_get_variable(r, var, key);
++    value = ngx_http_ssi_get_variable(r, var, &key);
+ 
+     if (value == NULL) {
+         vv = ngx_http_get_variable(r, var, key);
+@@ -2260,20 +2283,9 @@ static ngx_int_t
+ ngx_http_ssi_set(ngx_http_request_t *r, ngx_http_ssi_ctx_t *ctx,
+     ngx_str_t **params)
+ {
+-    ngx_int_t            key, rc;
+-    ngx_str_t           *name, *value, *vv;
+-    ngx_http_ssi_var_t  *var;
+-    ngx_http_ssi_ctx_t  *mctx;
+-
+-    mctx = ngx_http_get_module_ctx(r->main, ngx_http_ssi_filter_module);
+-
+-    if (mctx->variables == NULL) {
+-        mctx->variables = ngx_list_create(r->pool, 4,
+-                                          sizeof(ngx_http_ssi_var_t));
+-        if (mctx->variables == NULL) {
+-            return NGX_ERROR;
+-        }
+-    }
++    ngx_int_t            rc;
++    ngx_str_t           *name, *value;
++    ngx_uint_t           key = 0;
+ 
+     name = params[NGX_HTTP_SSI_SET_VAR];
+     value = params[NGX_HTTP_SSI_SET_VALUE];
+@@ -2287,24 +2299,10 @@ ngx_http_ssi_set(ngx_http_request_t *r, 
+         return rc;
+     }
+ 
+-    key = ngx_hash_strlow(name->data, name->data, name->len);
+-
+-    vv = ngx_http_ssi_get_variable(r, name, key);
+-
+-    if (vv) {
+-        *vv = *value;
+-        return NGX_OK;
+-    }
+-
+-    var = ngx_list_push(mctx->variables);
+-    if (var == NULL) {
++    if (ngx_http_ssi_set_variable(r, name, &key, value) == NULL) {
+         return NGX_ERROR;
+     }
+ 
+-    var->name = *name;
+-    var->key = key;
+-    var->value = *value;
+-
+     ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                    "set: \"%V\"=\"%V\"", name, value);
+ 
+Index: nginx-catap/nginx/src/http/modules/ngx_http_ssi_filter_module.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_ssi_filter_module.h
++++ nginx-catap/nginx/src/http/modules/ngx_http_ssi_filter_module.h
+@@ -104,4 +104,10 @@ typedef struct {
+ extern ngx_module_t  ngx_http_ssi_filter_module;
+ 
+ 
++ngx_str_t *ngx_http_ssi_get_variable(ngx_http_request_t *r, ngx_str_t *name,
++    ngx_uint_t *key);
++ngx_str_t *ngx_http_ssi_set_variable(ngx_http_request_t *r, ngx_str_t *name,
++    ngx_uint_t *key, ngx_str_t *value);
++
++
+ #endif /* _NGX_HTTP_SSI_FILTER_H_INCLUDED_ */
+Index: nginx-catap/nginx/src/http/ngx_http_variables.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_variables.c
++++ nginx-catap/nginx/src/http/ngx_http_variables.c
+@@ -32,6 +32,10 @@ static ngx_int_t ngx_http_variable_reque
+     ngx_http_variable_value_t *v, uintptr_t data);
+ static ngx_int_t ngx_http_variable_cookie(ngx_http_request_t *r,
+     ngx_http_variable_value_t *v, uintptr_t data);
++#if (NGX_HTTP_SSI)
++static ngx_int_t ngx_http_variable_ssi(ngx_http_request_t *r,
++    ngx_http_variable_value_t *v, uintptr_t data);
++#endif
+ static ngx_int_t ngx_http_variable_argument(ngx_http_request_t *r,
+     ngx_http_variable_value_t *v, uintptr_t data);
+ static ngx_int_t ngx_http_variable_crc32(ngx_http_request_t *r,
+@@ -553,6 +557,17 @@ ngx_http_get_variable(ngx_http_request_t
+         return NULL;
+     }
+ 
++#if (NGX_HTTP_SSI)
++    if (ngx_strncmp(name->data, "ssi_", 4) == 0) {
++
++        if (ngx_http_variable_ssi(r, vv, (uintptr_t) name) == NGX_OK) {
++            return vv;
++        }
++
++        return NULL;
++    }
++#endif
++
+     if (ngx_strncmp(name->data, "arg_", 4) == 0) {
+ 
+         if (ngx_http_variable_argument(r, vv, (uintptr_t) name) == NGX_OK) {
+@@ -891,6 +906,37 @@ ngx_http_variable_cookie(ngx_http_reques
+ }
+ 
+ 
++#if (NGX_HTTP_SSI)
++static ngx_int_t
++ngx_http_variable_ssi(ngx_http_request_t *r, ngx_http_variable_value_t *v,
++    uintptr_t data)
++{
++    ngx_str_t  *name = (ngx_str_t *) data;
++    ngx_str_t  *vv;
++    ngx_str_t   s;
++    ngx_uint_t  key = 0;
++
++    s.len = name->len - (sizeof("ssi_") - 1);
++    s.data = name->data + sizeof("ssi_") - 1;
++
++    vv = ngx_http_ssi_get_variable(r, &s, &key);
++
++    if (vv == NULL) {
++        v->not_found = 1;
++        return NGX_OK;
++    }
++
++    v->len = vv->len;
++    v->valid = 1;
++    v->no_cacheable = 1;
++    v->not_found = 0;
++    v->data = vv->data;
++
++    return NGX_OK;
++}
++#endif
++
++
+ static ngx_int_t
+ ngx_http_variable_argument(ngx_http_request_t *r, ngx_http_variable_value_t *v,
+     uintptr_t data)
+@@ -2294,6 +2340,15 @@ ngx_http_variables_init_vars(ngx_conf_t 
+             continue;
+         }
+ 
++#if (NGX_HTTP_SSI)
++        if (ngx_strncmp(v[i].name.data, "ssi_", 4) == 0) {
++            v[i].get_handler = ngx_http_variable_ssi;
++            v[i].data = (uintptr_t) &v[i].name;
++
++            continue;
++        }
++#endif
++
+         if (ngx_strncmp(v[i].name.data, "arg_", 4) == 0) {
+             v[i].get_handler = ngx_http_variable_argument;
+             v[i].data = (uintptr_t) &v[i].name;

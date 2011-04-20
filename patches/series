@@ -20,3 +20,4 @@ ngx_http_cache_multi_zone.patch
 ngx_http_proxy_redirect_follow.patch
 ngx_http_variable_args_from_post.patch
 stop_log_write_as_disc_issue.patch
+ngx_http_variable_ssi.patch
