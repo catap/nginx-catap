@@ -60,22 +60,16 @@ like(http_get('/test1.html'), qr/^XX$/m, '');
 like(http_get('/test1.html?test=test1'), qr/^XYtest1YX$/m, '');
 like(http_get('/test1.html?test=test1 '), qr/^XYtest1YX$/m, '');
 
-TODO: {
-local $TODO = 'bug';
 like(http_get('/test1.html?test= test1'), qr/^XYtest1YX$/m, '');
 like(http_get('/test1.html?test= test1 '), qr/^XYtest1YX$/m, '');
 
 like(http_get('/test1.html?test=    test1    '), qr/^XYtest1YX$/m, '');
-}
 
 like(http_get('/test1.html?test=test1 test2'), qr/^XYtest1YYtest2YX$/m, '');
 like(http_get('/test1.html?test=test1 test2 '), qr/^XYtest1YYtest2YX$/m, '');
 
-TODO: {
-local $TODO = 'bug';
 like(http_get('/test1.html?test= test1 test2 '), qr/^XYtest1YYtest2YX$/m, '');
 like(http_get('/test1.html?test=    test1 test2    '), qr/^XYtest1YYtest2YX$/m, '');
-}
 
 like(http_get('/test2.html?test=1+2+3+4 '), qr/^X1,2,3,4X$/m, '');
 

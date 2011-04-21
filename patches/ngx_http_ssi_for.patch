@@ -56,7 +56,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_ssi_filter_module.c
      { ngx_null_string, NULL, NULL, 0, 0, 0 }
  };
  
-@@ -2315,6 +2341,204 @@ ngx_http_ssi_set(ngx_http_request_t *r, 
+@@ -2315,6 +2341,211 @@ ngx_http_ssi_set(ngx_http_request_t *r, 
  
  
  static ngx_int_t
@@ -152,13 +152,16 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_ssi_filter_module.c
 +
 +    key = 0;
 +
-+    if (ngx_http_ssi_set_variable(r, &ctx->for_var, &key, &ctx->for_data) == NULL) {
-+        return NGX_ERROR;
-+    }
-+
 +    for (p = ctx->for_data.data, last = p + ctx->for_data.len - ctx->for_sep.len;
 +         p <= last; p++) {
 +        if (ngx_strncmp(p, ctx->for_sep.data, ctx->for_sep.len) == 0) {
++	    if (p == ctx->for_data.data) {
++		for (; p <= last
++		       && !ngx_strncmp(p, ctx->for_sep.data, ctx->for_sep.len);
++		     p++, ctx->for_data.data++, ctx->for_data.len--);
++		continue;
++	    }
++
 +            val.data = ctx->for_data.data;
 +            val.len = p - val.data;
 +
@@ -172,6 +175,10 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_ssi_filter_module.c
 +
 +            return NGX_OK;
 +        }
++    }
++
++    if (ngx_http_ssi_set_variable(r, &ctx->for_var, &key, &ctx->for_data) == NULL) {
++        return NGX_ERROR;
 +    }
 +
 +    ctx->for_data.len = 0;
