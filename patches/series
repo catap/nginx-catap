@@ -53,3 +53,4 @@ mdounin_escape-html-in-file-names.patch
 mdounin_build-with-embedded-perl-and-openssl.patch
 ngx_allocs.patch
 mdounin_gzip-handle-empty-flush-buffers.patch
+ngx_dump_config.patch

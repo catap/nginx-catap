@@ -1,0 +1,501 @@
+Index: nginx-catap/nginx/src/core/nginx.c
+===================================================================
+--- nginx-catap.orig/nginx/src/core/nginx.c
++++ nginx-catap/nginx/src/core/nginx.c
+@@ -197,6 +197,7 @@ ngx_uint_t          ngx_max_module;
+ static ngx_uint_t   ngx_show_help;
+ static ngx_uint_t   ngx_show_version;
+ static ngx_uint_t   ngx_show_configure;
++static ngx_uint_t   ngx_show_config;
+ static u_char      *ngx_prefix;
+ static u_char      *ngx_conf_file;
+ static u_char      *ngx_conf_params;
+@@ -238,6 +239,7 @@ main(int argc, char *const *argv)
+                 "  -V            : show version and configure options then exit"
+                                    CRLF
+                 "  -t            : test configuration and exit" CRLF
++                "  -d            : dump configuration and exit" CRLF
+                 "  -q            : suppress non-error messages "
+                                    "during configuration testing" CRLF
+                 "  -s signal     : send signal to a master process: "
+@@ -360,6 +362,18 @@ main(int argc, char *const *argv)
+         return 0;
+     }
+ 
++    if (ngx_show_config) {
++        ngx_buf_t *b;
++        b = ngx_conf_dump(cycle, cycle->pool);
++        if (b == NULL) {
++            return 1;
++        }
++
++        ngx_write_console(ngx_stdout, b->pos, b->last - b->pos);
++
++        return 0;
++    }
++
+     if (ngx_signal) {
+         return ngx_signal_process(cycle, ngx_signal);
+     }
+@@ -725,6 +739,10 @@ ngx_get_options(int argc, char *const *a
+                 ngx_test_config = 1;
+                 break;
+ 
++            case 'd':
++                ngx_show_config = 1;
++                break;
++
+             case 'q':
+                 ngx_quiet_mode = 1;
+                 break;
+Index: nginx-catap/nginx/src/core/ngx_conf_file.c
+===================================================================
+--- nginx-catap.orig/nginx/src/core/ngx_conf_file.c
++++ nginx-catap/nginx/src/core/ngx_conf_file.c
+@@ -435,12 +435,15 @@ ngx_conf_read_token(ngx_conf_t *cf)
+ {
+     u_char      *start, ch, *src, *dst;
+     off_t        file_size;
+-    size_t       len;
++    size_t       i, len;
+     ssize_t      n, size;
+     ngx_uint_t   found, need_space, last_space, sharp_comment, variable;
+     ngx_uint_t   quoted, s_quoted, d_quoted, start_line;
+-    ngx_str_t   *word;
++    ngx_str_t   *word, *w;
+     ngx_buf_t   *b;
++    ngx_int_t    ret;
++
++    ngx_conf_dump_elm_t *delm;
+ 
+     found = 0;
+     need_space = 0;
+@@ -470,16 +473,19 @@ ngx_conf_read_token(ngx_conf_t *cf)
+                         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                                            "unexpected end of parameter, "
+                                            "expecting \";\"");
+-                        return NGX_ERROR;
++                        ret = NGX_ERROR;
++                        goto out;
+                     }
+ 
+                     ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                                   "unexpected end of file, "
+                                   "expecting \";\" or \"}\"");
+-                    return NGX_ERROR;
++                    ret = NGX_ERROR;
++                    goto out;
+                 }
+ 
+-                return NGX_CONF_FILE_DONE;
++                ret = NGX_CONF_FILE_DONE;
++                goto out;
+             }
+ 
+             len = b->pos - start;
+@@ -497,13 +503,15 @@ ngx_conf_read_token(ngx_conf_t *cf)
+                     ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                                        "too long parameter \"%*s...\" started",
+                                        10, start);
+-                    return NGX_ERROR;
++                    ret = NGX_ERROR;
++                    goto out;
+                 }
+ 
+                 ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                                    "too long parameter, probably "
+                                    "missing terminating \"%c\" character", ch);
+-                return NGX_ERROR;
++                ret = NGX_ERROR;
++                goto out;
+             }
+ 
+             if (len) {
+@@ -520,7 +528,8 @@ ngx_conf_read_token(ngx_conf_t *cf)
+                               cf->conf_file->file.offset);
+ 
+             if (n == NGX_ERROR) {
+-                return NGX_ERROR;
++                ret = NGX_ERROR;
++                goto out;
+             }
+ 
+             if (n != size) {
+@@ -528,7 +537,8 @@ ngx_conf_read_token(ngx_conf_t *cf)
+                                    ngx_read_file_n " returned "
+                                    "only %z bytes instead of %z",
+                                    n, size);
+-                return NGX_ERROR;
++                ret = NGX_ERROR;
++                goto out;
+             }
+ 
+             b->pos = b->start + len;
+@@ -563,11 +573,13 @@ ngx_conf_read_token(ngx_conf_t *cf)
+             }
+ 
+             if (ch == ';') {
+-                return NGX_OK;
++                ret = NGX_OK;
++                goto out;
+             }
+ 
+             if (ch == '{') {
+-                return NGX_CONF_BLOCK_START;
++                ret = NGX_CONF_BLOCK_START;
++                goto out;
+             }
+ 
+             if (ch == ')') {
+@@ -577,7 +589,8 @@ ngx_conf_read_token(ngx_conf_t *cf)
+             } else {
+                  ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                                     "unexpected \"%c\"", ch);
+-                 return NGX_ERROR;
++                 ret = NGX_ERROR;
++                 goto out;
+             }
+         }
+ 
+@@ -596,23 +609,28 @@ ngx_conf_read_token(ngx_conf_t *cf)
+                 if (cf->args->nelts == 0) {
+                     ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                                        "unexpected \"%c\"", ch);
+-                    return NGX_ERROR;
++                    ret = NGX_ERROR;
++                    goto out;
+                 }
+ 
+                 if (ch == '{') {
+-                    return NGX_CONF_BLOCK_START;
++                    ret = NGX_CONF_BLOCK_START;
++                    goto out;
+                 }
+ 
+-                return NGX_OK;
++                ret = NGX_OK;
++                goto out;
+ 
+             case '}':
+                 if (cf->args->nelts != 0) {
+                     ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                                        "unexpected \"}\"");
+-                    return NGX_ERROR;
++                    ret = NGX_ERROR;
++                    goto out;
+                 }
+ 
+-                return NGX_CONF_BLOCK_DONE;
++                ret = NGX_CONF_BLOCK_DONE;
++                goto out;
+ 
+             case '#':
+                 sharp_comment = 1;
+@@ -680,12 +698,14 @@ ngx_conf_read_token(ngx_conf_t *cf)
+             if (found) {
+                 word = ngx_array_push(cf->args);
+                 if (word == NULL) {
+-                    return NGX_ERROR;
++                    ret = NGX_ERROR;
++                    goto out;
+                 }
+ 
+                 word->data = ngx_pnalloc(cf->pool, b->pos - start + 1);
+                 if (word->data == NULL) {
+-                    return NGX_ERROR;
++                    ret = NGX_ERROR;
++                    goto out;
+                 }
+ 
+                 for (dst = word->data, src = start, len = 0;
+@@ -723,17 +743,65 @@ ngx_conf_read_token(ngx_conf_t *cf)
+                 word->len = len;
+ 
+                 if (ch == ';') {
+-                    return NGX_OK;
++                    ret = NGX_OK;
++                    goto out;
+                 }
+ 
+                 if (ch == '{') {
+-                    return NGX_CONF_BLOCK_START;
++                    ret = NGX_CONF_BLOCK_START;
++                    goto out;
+                 }
+ 
+                 found = 0;
+             }
+         }
+     }
++
++out:
++    if (ret == NGX_ERROR ||
++	(ret != NGX_CONF_BLOCK_DONE &&
++	 !cf->args->nelts)) {
++        return ret;
++    }
++
++    delm = ngx_list_push(&cf->cycle->conf_dump);
++
++    if (ret == NGX_CONF_BLOCK_START) {
++        delm->type = dump_elm_start_block;
++    } else if (ret == NGX_CONF_BLOCK_DONE) {
++        delm->type = dump_elm_end_block;
++    } else if (ret == NGX_OK) {
++        delm->type = dump_elm_param;
++    }
++
++    if (cf->args->nelts > 0) {
++        if (ngx_array_init(&delm->args, cf->cycle->pool,
++                           cf->args->nelts, sizeof(ngx_str_t))
++            != NGX_OK) {
++            return NGX_ERROR;
++        }
++
++        for (i = 0; i < cf->args->nelts; i++) {
++            word = &(((ngx_str_t*)cf->args->elts)[i]);
++
++            if (word->len) {
++                w = ngx_array_push(&delm->args);
++                if (w == NULL) {
++                    return NGX_ERROR;
++                }
++
++                w->len = word->len;
++                w->data = ngx_pnalloc(cf->cycle->dump_pool, w->len);
++                if (w->data == NULL) {
++                    return NGX_ERROR;
++                }
++
++                ngx_memcpy(w->data, word->data, w->len);
++            }
++        }
++    }
++
++    return ret;
+ }
+ 
+ 
+@@ -1503,3 +1571,115 @@ ngx_conf_check_num_bounds(ngx_conf_t *cf
+ 
+     return NGX_CONF_ERROR;
+ }
++
++
++ngx_buf_t *ngx_conf_dump(ngx_cycle_t *cycle, ngx_pool_t *pool)
++{
++    size_t               len = 0, deep = 0;
++    ngx_buf_t           *b;
++    ngx_str_t           *word;
++    ngx_uint_t           i, j;
++    ngx_list_part_t     *part;
++    ngx_conf_dump_elm_t *delm;
++
++    part = &cycle->conf_dump.part;
++    delm = part->elts;
++
++    for (i = 0 ;;i++) {
++        if (i >= part->nelts) {
++            if (part->next == NULL) {
++                break;
++            }
++
++            part = part->next;
++            delm = part->elts;
++            i = 0;
++        }
++
++        if (delm[i].args.nelts) {
++            for (j = 0; j < deep; j++) {
++                len += 2;
++            }
++        }
++
++        word = (ngx_str_t *)delm[i].args.elts;
++        for (j = 0; j < delm[i].args.nelts; j++) {
++
++            len += word[j].len;
++
++            if (j + 1 < delm[i].args.nelts) {
++                len += 1;
++            }
++        }
++
++
++        if (delm[i].type == dump_elm_param) {
++            len += 2;
++
++        } else if (delm[i].type == dump_elm_start_block) {
++            len += 3;
++            deep++;
++
++        } else if (delm[i].type == dump_elm_end_block) {
++            deep--;
++            for (j = 0; j < deep; j++) {
++                len += 2;
++            }
++            len += 2;
++        }
++    }
++
++    b = ngx_create_temp_buf(pool, len);
++    if (b == NULL) {
++        return NULL;
++    }
++
++    part = &cycle->conf_dump.part;
++    delm = part->elts;
++
++    for (i = 0 ;;i++) {
++        if (i >= part->nelts) {
++            if (part->next == NULL) {
++                break;
++            }
++
++            part = part->next;
++            delm = part->elts;
++            i = 0;
++        }
++
++        if (delm[i].args.nelts) {
++            for (j = 0; j < deep; j++) {
++                b->last = ngx_cpymem(b->last, "  ", 2);
++            }
++        }
++
++        word = (ngx_str_t *)delm[i].args.elts;
++        for (j = 0; j < delm[i].args.nelts; j++) {
++
++            b->last = ngx_cpymem(b->last, word[j].data, word[j].len);
++
++            if (j + 1 < delm[i].args.nelts) {
++                b->last = ngx_cpymem(b->last, " ", 1);
++            }
++        }
++
++
++        if (delm[i].type == dump_elm_param) {
++            b->last = ngx_cpymem(b->last, ";\n", 2);
++
++        } else if (delm[i].type == dump_elm_start_block) {
++            b->last = ngx_cpymem(b->last, " {\n", 3);
++            deep++;
++
++        } else if (delm[i].type == dump_elm_end_block) {
++            deep--;
++            for (j = 0; j < deep; j++) {
++                b->last = ngx_cpymem(b->last, "  ", 2);
++            }
++            b->last = ngx_cpymem(b->last, "}\n", 2);
++        }
++    }
++
++    return b;
++}
+Index: nginx-catap/nginx/src/core/ngx_conf_file.h
+===================================================================
+--- nginx-catap.orig/nginx/src/core/ngx_conf_file.h
++++ nginx-catap/nginx/src/core/ngx_conf_file.h
+@@ -73,6 +73,9 @@
+ 
+ #define NGX_MAX_CONF_ERRSTR  1024
+ 
++#ifndef NGX_CONF_DUMP_POOL_SIZE
++#define NGX_CONF_DUMP_POOL_SIZE     16384
++#endif
+ 
+ struct ngx_command_s {
+     ngx_str_t             name;
+@@ -216,6 +219,16 @@ typedef struct {
+     ngx_uint_t                mask;
+ } ngx_conf_bitmask_t;
+ 
++typedef struct {
++    enum {
++        dump_elm_start_block,	/* the token terminated by "{" */
++	dump_elm_end_block,	/* the "}" */
++        dump_elm_param		/* the token terminated by ";" */
++    } type;
++
++    ngx_array_t   args;
++} ngx_conf_dump_elm_t;
++
+ 
+ 
+ char * ngx_conf_deprecated(ngx_conf_t *cf, void *post, void *data);
+@@ -339,6 +352,8 @@ char *ngx_conf_set_bufs_slot(ngx_conf_t 
+ char *ngx_conf_set_enum_slot(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+ char *ngx_conf_set_bitmask_slot(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+ 
++ngx_buf_t *ngx_conf_dump(ngx_cycle_t *cycle, ngx_pool_t *pool);
++
+ 
+ extern ngx_uint_t     ngx_max_module;
+ extern ngx_module_t  *ngx_modules[];
+Index: nginx-catap/nginx/src/core/ngx_cycle.c
+===================================================================
+--- nginx-catap.orig/nginx/src/core/ngx_cycle.c
++++ nginx-catap/nginx/src/core/ngx_cycle.c
+@@ -258,6 +258,20 @@ ngx_init_cycle(ngx_cycle_t *old_cycle)
+     log->log_level = NGX_LOG_DEBUG_ALL;
+ #endif
+ 
++    cycle->dump_pool = ngx_create_pool(NGX_CONF_DUMP_POOL_SIZE, log);
++    if (cycle->dump_pool == NULL) {
++        ngx_destroy_pool(pool);
++        ngx_destroy_pool(conf.temp_pool);
++        return NULL;
++    }
++
++    if (ngx_list_init(&cycle->conf_dump, cycle->dump_pool, 64,
++                      sizeof(ngx_conf_dump_elm_t))
++        != NGX_OK) {
++        ngx_destroy_cycle_pools(&conf);
++        return NULL;
++    }
++
+     if (ngx_conf_param(&conf) != NGX_CONF_OK) {
+         environ = senv;
+         ngx_destroy_cycle_pools(&conf);
+@@ -847,6 +861,8 @@ ngx_destroy_cycle_pools(ngx_conf_t *conf
+ {
+     ngx_destroy_pool(conf->temp_pool);
+     ngx_destroy_pool(conf->pool);
++    ngx_destroy_pool(conf->cycle->pool);
++    ngx_destroy_pool(conf->cycle->dump_pool);
+ }
+ 
+ 
+Index: nginx-catap/nginx/src/core/ngx_cycle.h
+===================================================================
+--- nginx-catap.orig/nginx/src/core/ngx_cycle.h
++++ nginx-catap/nginx/src/core/ngx_cycle.h
+@@ -36,6 +36,7 @@ struct ngx_shm_zone_s {
+ struct ngx_cycle_s {
+     void                  ****conf_ctx;
+     ngx_pool_t               *pool;
++    ngx_pool_t               *dump_pool;
+ 
+     ngx_log_t                *log;
+     ngx_log_t                 new_log;
+@@ -63,6 +64,7 @@ struct ngx_cycle_s {
+     ngx_str_t                 conf_file;
+     ngx_str_t                 conf_param;
+     ngx_str_t                 conf_prefix;
++    ngx_list_t                conf_dump;
+     ngx_str_t                 prefix;
+     ngx_str_t                 lock_file;
+     ngx_str_t                 hostname;
+Index: nginx-catap/nginx/src/os/unix/ngx_files.h
+===================================================================
+--- nginx-catap.orig/nginx/src/os/unix/ngx_files.h
++++ nginx-catap/nginx/src/os/unix/ngx_files.h
+@@ -324,6 +324,8 @@ size_t ngx_fs_bsize(u_char *name);
+ #define ngx_set_stderr(fd)       dup2(fd, STDERR_FILENO)
+ #define ngx_set_stderr_n         "dup2(STDERR_FILENO)"
+ 
++#define ngx_stdout               STDOUT_FILENO
++
+ 
+ #if (NGX_HAVE_FILE_AIO)
+ 
