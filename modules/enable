@@ -3,3 +3,4 @@ ngx_http_is_bot
 ngx_http_rnd_filter_module
 ngx_http_hash
 ngx_http_limit_var_module
+ngx_http_dump_config_module

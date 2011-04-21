@@ -19,3 +19,6 @@
 [submodule "modules/ngx_http_limit_var_module"]
 	path = modules/ngx_http_limit_var_module
 	url = git://github.com/catap/ngx_http_limit_var_module.git
+[submodule "modules/ngx_http_dump_config_module"]
+	path = modules/ngx_http_dump_config_module
+	url = git://github.com/catap/ngx_http_dump_config_module.git
