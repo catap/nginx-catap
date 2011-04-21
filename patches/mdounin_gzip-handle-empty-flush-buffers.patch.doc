@@ -1,0 +1,12 @@
+Gzip filter: handle empty flush buffers.
+
+Empty flush buffers are legitimate and may happen e.g. due to $r->flush()
+calls in embedded perl.  If there are no data buffered in zlib deflate()
+will return Z_BUF_ERROR (i.e. no progress possible) without adding anything
+to output.  Don't treat Z_BUF_ERROR as fatal and correctly send empty flush
+buffer if we have no data in output at all.
+
+See this thread for details:
+
+http://nginx.org/pipermail/nginx/2010-November/023693.html
+
