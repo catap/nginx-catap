@@ -21,6 +21,4 @@ unapply:
 	$(MAKE) -C patches unapply
 
 test: build
-	@TEST_NGINX_BINARY=../nginx/objs/nginx-catap prove tests
-	@TEST_NGINX_BINARY=../nginx/objs/nginx-catap prove patches
-	make -C modules test
+	@TEST_NGINX_BINARY=`pwd`/nginx/objs/nginx-catap prove -r .
