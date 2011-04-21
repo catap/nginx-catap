@@ -1,0 +1,6889 @@
+Index: nginx-catap/nginx/auto/modules
+===================================================================
+--- nginx-catap.orig/nginx/auto/modules
++++ nginx-catap/nginx/auto/modules
+@@ -467,6 +467,18 @@ if [ $NGX_STATUS = YES ]; then
+     CORE_DEPS="$CORE_DEPS $NGX_STATUS_DEPS"
+ fi
+ 
++if [ $USE_OBSD_MALLOC = YES ]; then
++    have=OBSD_MALLOC . auto/have
++    USE_JEMALLOC=NO
++    CORE_SRCS="$CORE_SRCS $NGX_OBSD_MALLOC_SRCS"
++fi
++
++if [ $USE_JEMALLOC = YES ]; then
++    have=JEMALLOC . auto/have
++    USE_OBSD_MALLOC=NO
++    CORE_SRCS="$CORE_SRCS $NGX_JEMALLOC_SRCS"
++fi
++
+ 
+ cat << END                                    > $NGX_MODULES_C
+ 
+Index: nginx-catap/nginx/auto/options
+===================================================================
+--- nginx-catap.orig/nginx/auto/options
++++ nginx-catap/nginx/auto/options
+@@ -41,6 +41,9 @@ EVENT_SELECT=NO
+ EVENT_POLL=NO
+ EVENT_AIO=NO
+ 
++USE_OBSD_MALLOC=NO
++USE_JEMALLOC=NO
++
+ USE_THREADS=NO
+ 
+ NGX_FILE_AIO=NO
+@@ -181,6 +184,10 @@ do
+         --without-poll_module)           EVENT_POLL=NONE            ;;
+         --with-aio_module)               EVENT_AIO=YES              ;;
+ 
++        --with-obsd_malloc)              USE_OBSD_MALLOC=YES        ;;
++        --with-jemalloc)                 USE_JEMALLOC=YES           ;;
++
++
+         #--with-threads=*)                USE_THREADS="$value"       ;;
+         #--with-threads)                  USE_THREADS="pthreads"     ;;
+ 
+Index: nginx-catap/nginx/auto/sources
+===================================================================
+--- nginx-catap.orig/nginx/auto/sources
++++ nginx-catap/nginx/auto/sources
+@@ -517,6 +517,10 @@ NGX_GOOGLE_PERFTOOLS_SRCS=src/misc/ngx_g
+ 
+ NGX_CPP_TEST_SRCS=src/misc/ngx_cpp_test_module.cpp
+ 
++NGX_OBSD_MALLOC_SRCS=src/os/unix/ngx_obsd_malloc.c
++
++NGX_JEMALLOC_SRCS=src/os/unix/ngx_jemalloc.c
++
+ NGX_STATUS_MODULE=ngx_status_module
+ NGX_STATUS_SRCS=src/core/ngx_status.c
+ NGX_STATUS_DEPS=src/core/ngx_status.h
+Index: nginx-catap/nginx/src/os/unix/ngx_alloc.h
+===================================================================
+--- nginx-catap.orig/nginx/src/os/unix/ngx_alloc.h
++++ nginx-catap/nginx/src/os/unix/ngx_alloc.h
+@@ -15,8 +15,14 @@
+ void *ngx_alloc(size_t size, ngx_log_t *log);
+ void *ngx_calloc(size_t size, ngx_log_t *log);
+ 
+-#define ngx_free          free
++#if (OBSD_MALLOC) || (JEMALLOC)
++
++#define NGX_HAVE_POSIX_MEMALIGN 1
++#define NGX_HAVE_MEMALIGN       1
+ 
++#endif	/* (OBSD_MALLOC) || (JEMALLOC) */
++
++#define ngx_free          free
+ 
+ /*
+  * Linux has memalign() or posix_memalign()
+@@ -35,7 +41,6 @@ void *ngx_memalign(size_t alignment, siz
+ 
+ #endif
+ 
+-
+ extern ngx_uint_t  ngx_pagesize;
+ extern ngx_uint_t  ngx_pagesize_shift;
+ extern ngx_uint_t  ngx_cacheline_size;
+Index: nginx-catap/nginx/src/os/unix/ngx_jemalloc.c
+===================================================================
+--- /dev/null
++++ nginx-catap/nginx/src/os/unix/ngx_jemalloc.c
+@@ -0,0 +1,5309 @@
++/*
++ * Copyright (c) 2008 Kirill A. Korinsiy <catap@catap.ru>, adaptive for nginx.
++ */
++/*
++ * Copyright (C) 2006-2008 Jason Evans <jasone@FreeBSD.org>.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice(s), this list of conditions and the following disclaimer as
++ *    the first lines of this file unmodified other than the possible
++ *    addition of one or more copyright notices.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice(s), this list of conditions and the following disclaimer in
++ *    the documentation and/or other materials provided with the
++ *    distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDER(S) ``AS IS'' AND ANY
++ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
++ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT HOLDER(S) BE
++ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
++ * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
++ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
++ * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
++ * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ *
++ *******************************************************************************
++ *
++ * This allocator implementation is designed to provide scalable performance
++ * for multi-threaded programs on multi-processor systems.  The following
++ * features are included for this purpose:
++ *
++ *   + Multiple arenas are used if there are multiple CPUs, which reduces lock
++ *     contention and cache sloshing.
++ *
++ *   + Cache line sharing between arenas is avoided for internal data
++ *     structures.
++ *
++ *   + Memory is managed in chunks and runs (chunks can be split into runs),
++ *     rather than as individual pages.  This provides a constant-time
++ *     mechanism for associating allocations with particular arenas.
++ *
++ * Allocation requests are rounded up to the nearest size class, and no record
++ * of the original request size is maintained.  Allocations are broken into
++ * categories according to size class.  Assuming runtime defaults, 4 kB pages
++ * and a 16 byte quantum on a 32-bit system, the size classes in each category
++ * are as follows:
++ *
++ *   |=====================================|
++ *   | Category | Subcategory    |    Size |
++ *   |=====================================|
++ *   | Small    | Tiny           |       2 |
++ *   |          |                |       4 |
++ *   |          |                |       8 |
++ *   |          |----------------+---------|
++ *   |          | Quantum-spaced |      16 |
++ *   |          |                |      32 |
++ *   |          |                |      48 |
++ *   |          |                |     ... |
++ *   |          |                |     480 |
++ *   |          |                |     496 |
++ *   |          |                |     512 |
++ *   |          |----------------+---------|
++ *   |          | Sub-page       |    1 kB |
++ *   |          |                |    2 kB |
++ *   |=====================================|
++ *   | Large                     |    4 kB |
++ *   |                           |    8 kB |
++ *   |                           |   12 kB |
++ *   |                           |     ... |
++ *   |                           | 1012 kB |
++ *   |                           | 1016 kB |
++ *   |                           | 1020 kB |
++ *   |=====================================|
++ *   | Huge                      |    1 MB |
++ *   |                           |    2 MB |
++ *   |                           |    3 MB |
++ *   |                           |     ... |
++ *   |=====================================|
++ *
++ * A different mechanism is used for each category:
++ *
++ *   Small : Each size class is segregated into its own set of runs.  Each run
++ *           maintains a bitmap of which regions are free/allocated.
++ *
++ *   Large : Each allocation is backed by a dedicated run.  Metadata are stored
++ *           in the associated arena chunk header maps.
++ *
++ *   Huge : Each allocation is backed by a dedicated contiguous set of chunks.
++ *          Metadata are stored in a separate red-black tree.
++ *
++ *******************************************************************************
++ */
++
++/*
++ * MALLOC_PRODUCTION disables assertions and statistics gathering.  It also
++ * defaults the A and J runtime options to off.  These settings are appropriate
++ * for production systems.
++ */
++#define	MALLOC_PRODUCTION
++
++#ifndef MALLOC_PRODUCTION
++   /*
++    * MALLOC_DEBUG enables assertions and other sanity checks, and disables
++    * inline functions.
++    */
++#  define MALLOC_DEBUG
++
++   /* MALLOC_STATS enables statistics calculation. */
++#  define MALLOC_STATS
++#endif
++
++/*
++ * MALLOC_BALANCE enables monitoring of arena lock contention and dynamically
++ * re-balances arena load if exponentially averaged contention exceeds a
++ * certain threshold.
++ */
++#define	MALLOC_BALANCE
++
++/*
++ * MALLOC_DSS enables use of sbrk(2) to allocate chunks from the data storage
++ * segment (DSS).  In an ideal world, this functionality would be completely
++ * unnecessary, but we are burdened by history and the lack of resource limits
++ * for anonymous mapped memory.
++ */
++#define	MALLOC_DSS
++
++#include <sys/mman.h>
++#ifndef MADV_FREE
++#  define MADV_FREE	MADV_DONTNEED
++#endif
++
++#ifndef __DECONST
++#  define __DECONST(type, var)	((type)(uintptr_t)(const void *)(var))
++#endif
++
++/* Node structure. */
++#define	rb_node(a_type)							\
++struct {								\
++    a_type *rbn_left;							\
++    a_type *rbn_right_red;						\
++}
++
++/* Root structure. */
++#define	rb_tree(a_type)							\
++struct {								\
++    a_type *rbt_root;							\
++    a_type rbt_nil;							\
++}
++
++/* Left accessors. */
++#define	rbp_left_get(a_type, a_field, a_node)				\
++    ((a_node)->a_field.rbn_left)
++#define	rbp_left_set(a_type, a_field, a_node, a_left) do {		\
++    (a_node)->a_field.rbn_left = a_left;				\
++} while (0)
++
++/* Right accessors. */
++#define	rbp_right_get(a_type, a_field, a_node)				\
++    ((a_type *) (((intptr_t) (a_node)->a_field.rbn_right_red)		\
++      & ((ssize_t)-2)))
++#define	rbp_right_set(a_type, a_field, a_node, a_right) do {		\
++    (a_node)->a_field.rbn_right_red = (a_type *) (((uintptr_t) a_right)	\
++      | (((uintptr_t) (a_node)->a_field.rbn_right_red) & ((size_t)1)));	\
++} while (0)
++
++/* Color accessors. */
++#define	rbp_red_get(a_type, a_field, a_node)				\
++    ((bool) (((uintptr_t) (a_node)->a_field.rbn_right_red)		\
++      & ((size_t)1)))
++#define	rbp_color_set(a_type, a_field, a_node, a_red) do {		\
++    (a_node)->a_field.rbn_right_red = (a_type *) ((((intptr_t)		\
++      (a_node)->a_field.rbn_right_red) & ((ssize_t)-2))			\
++      | ((ssize_t)a_red));						\
++} while (0)
++#define	rbp_red_set(a_type, a_field, a_node) do {			\
++    (a_node)->a_field.rbn_right_red = (a_type *) (((uintptr_t)		\
++      (a_node)->a_field.rbn_right_red) | ((size_t)1));			\
++} while (0)
++#define	rbp_black_set(a_type, a_field, a_node) do {			\
++    (a_node)->a_field.rbn_right_red = (a_type *) (((intptr_t)		\
++      (a_node)->a_field.rbn_right_red) & ((ssize_t)-2));		\
++} while (0)
++
++/* Node initializer. */
++#define	rbp_node_new(a_type, a_field, a_tree, a_node) do {		\
++    rbp_left_set(a_type, a_field, (a_node), &(a_tree)->rbt_nil);	\
++    rbp_right_set(a_type, a_field, (a_node), &(a_tree)->rbt_nil);	\
++    rbp_red_set(a_type, a_field, (a_node));				\
++} while (0)
++
++/* Tree initializer. */
++#define	rb_new(a_type, a_field, a_tree) do {				\
++    (a_tree)->rbt_root = &(a_tree)->rbt_nil;				\
++    rbp_node_new(a_type, a_field, a_tree, &(a_tree)->rbt_nil);		\
++    rbp_black_set(a_type, a_field, &(a_tree)->rbt_nil);			\
++} while (0)
++
++/* Tree operations. */
++#define	rbp_black_height(a_type, a_field, a_tree, r_height) do {	\
++    a_type *rbp_bh_t;							\
++    for (rbp_bh_t = (a_tree)->rbt_root, (r_height) = 0;			\
++      rbp_bh_t != &(a_tree)->rbt_nil;					\
++      rbp_bh_t = rbp_left_get(a_type, a_field, rbp_bh_t)) {		\
++	if (rbp_red_get(a_type, a_field, rbp_bh_t) == false) {		\
++	    (r_height)++;						\
++	}								\
++    }									\
++} while (0)
++
++#define	rbp_first(a_type, a_field, a_tree, a_root, r_node) do {		\
++    for ((r_node) = (a_root);						\
++      rbp_left_get(a_type, a_field, (r_node)) != &(a_tree)->rbt_nil;	\
++      (r_node) = rbp_left_get(a_type, a_field, (r_node))) {		\
++    }									\
++} while (0)
++
++#define	rbp_last(a_type, a_field, a_tree, a_root, r_node) do {		\
++    for ((r_node) = (a_root);						\
++      rbp_right_get(a_type, a_field, (r_node)) != &(a_tree)->rbt_nil;	\
++      (r_node) = rbp_right_get(a_type, a_field, (r_node))) {		\
++    }									\
++} while (0)
++
++#define	rbp_next(a_type, a_field, a_cmp, a_tree, a_node, r_node) do {	\
++    if (rbp_right_get(a_type, a_field, (a_node))			\
++      != &(a_tree)->rbt_nil) {						\
++	rbp_first(a_type, a_field, a_tree, rbp_right_get(a_type,	\
++	  a_field, (a_node)), (r_node));				\
++    } else {								\
++	a_type *rbp_n_t = (a_tree)->rbt_root;				\
++	assert(rbp_n_t != &(a_tree)->rbt_nil);				\
++	(r_node) = &(a_tree)->rbt_nil;					\
++	while (true) {							\
++	    int rbp_n_cmp = (a_cmp)((a_node), rbp_n_t);			\
++	    if (rbp_n_cmp < 0) {					\
++		(r_node) = rbp_n_t;					\
++		rbp_n_t = rbp_left_get(a_type, a_field, rbp_n_t);	\
++	    } else if (rbp_n_cmp > 0) {					\
++		rbp_n_t = rbp_right_get(a_type, a_field, rbp_n_t);	\
++	    } else {							\
++		break;							\
++	    }								\
++	    assert(rbp_n_t != &(a_tree)->rbt_nil);			\
++	}								\
++    }									\
++} while (0)
++
++#define	rbp_prev(a_type, a_field, a_cmp, a_tree, a_node, r_node) do {	\
++    if (rbp_left_get(a_type, a_field, (a_node)) != &(a_tree)->rbt_nil) {\
++	rbp_last(a_type, a_field, a_tree, rbp_left_get(a_type,		\
++	  a_field, (a_node)), (r_node));				\
++    } else {								\
++	a_type *rbp_p_t = (a_tree)->rbt_root;				\
++	assert(rbp_p_t != &(a_tree)->rbt_nil);				\
++	(r_node) = &(a_tree)->rbt_nil;					\
++	while (true) {							\
++	    int rbp_p_cmp = (a_cmp)((a_node), rbp_p_t);			\
++	    if (rbp_p_cmp < 0) {					\
++		rbp_p_t = rbp_left_get(a_type, a_field, rbp_p_t);	\
++	    } else if (rbp_p_cmp > 0) {					\
++		(r_node) = rbp_p_t;					\
++		rbp_p_t = rbp_right_get(a_type, a_field, rbp_p_t);	\
++	    } else {							\
++		break;							\
++	    }								\
++	    assert(rbp_p_t != &(a_tree)->rbt_nil);			\
++	}								\
++    }									\
++} while (0)
++
++#define	rb_first(a_type, a_field, a_tree, r_node) do {			\
++    rbp_first(a_type, a_field, a_tree, (a_tree)->rbt_root, (r_node));	\
++    if ((r_node) == &(a_tree)->rbt_nil) {				\
++	(r_node) = NULL;						\
++    }									\
++} while (0)
++
++#define	rb_last(a_type, a_field, a_tree, r_node) do {			\
++    rbp_last(a_type, a_field, a_tree, (a_tree)->rbt_root, r_node);	\
++    if ((r_node) == &(a_tree)->rbt_nil) {				\
++	(r_node) = NULL;						\
++    }									\
++} while (0)
++
++#define	rb_next(a_type, a_field, a_cmp, a_tree, a_node, r_node) do {	\
++    rbp_next(a_type, a_field, a_cmp, a_tree, (a_node), (r_node));	\
++    if ((r_node) == &(a_tree)->rbt_nil) {				\
++	(r_node) = NULL;						\
++    }									\
++} while (0)
++
++#define	rb_prev(a_type, a_field, a_cmp, a_tree, a_node, r_node) do {	\
++    rbp_prev(a_type, a_field, a_cmp, a_tree, (a_node), (r_node));	\
++    if ((r_node) == &(a_tree)->rbt_nil) {				\
++	(r_node) = NULL;						\
++    }									\
++} while (0)
++
++#define	rb_search(a_type, a_field, a_cmp, a_tree, a_key, r_node) do {	\
++    int rbp_se_cmp;							\
++    (r_node) = (a_tree)->rbt_root;					\
++    while ((r_node) != &(a_tree)->rbt_nil				\
++      && (rbp_se_cmp = (a_cmp)((a_key), (r_node))) != 0) {		\
++	if (rbp_se_cmp < 0) {						\
++	    (r_node) = rbp_left_get(a_type, a_field, (r_node));		\
++	} else {							\
++	    (r_node) = rbp_right_get(a_type, a_field, (r_node));	\
++	}								\
++    }									\
++    if ((r_node) == &(a_tree)->rbt_nil) {				\
++	(r_node) = NULL;						\
++    }									\
++} while (0)
++
++/*
++ * Find a match if it exists.  Otherwise, find the next greater node, if one
++ * exists.
++ */
++#define	rb_nsearch(a_type, a_field, a_cmp, a_tree, a_key, r_node) do {	\
++    a_type *rbp_ns_t = (a_tree)->rbt_root;				\
++    (r_node) = NULL;							\
++    while (rbp_ns_t != &(a_tree)->rbt_nil) {				\
++	int rbp_ns_cmp = (a_cmp)((a_key), rbp_ns_t);			\
++	if (rbp_ns_cmp < 0) {						\
++	    (r_node) = rbp_ns_t;					\
++	    rbp_ns_t = rbp_left_get(a_type, a_field, rbp_ns_t);		\
++	} else if (rbp_ns_cmp > 0) {					\
++	    rbp_ns_t = rbp_right_get(a_type, a_field, rbp_ns_t);	\
++	} else {							\
++	    (r_node) = rbp_ns_t;					\
++	    break;							\
++	}								\
++    }									\
++} while (0)
++
++/*
++ * Find a match if it exists.  Otherwise, find the previous lesser node, if one
++ * exists.
++ */
++#define	rb_psearch(a_type, a_field, a_cmp, a_tree, a_key, r_node) do {	\
++    a_type *rbp_ps_t = (a_tree)->rbt_root;				\
++    (r_node) = NULL;							\
++    while (rbp_ps_t != &(a_tree)->rbt_nil) {				\
++	int rbp_ps_cmp = (a_cmp)((a_key), rbp_ps_t);			\
++	if (rbp_ps_cmp < 0) {						\
++	    rbp_ps_t = rbp_left_get(a_type, a_field, rbp_ps_t);		\
++	} else if (rbp_ps_cmp > 0) {					\
++	    (r_node) = rbp_ps_t;					\
++	    rbp_ps_t = rbp_right_get(a_type, a_field, rbp_ps_t);	\
++	} else {							\
++	    (r_node) = rbp_ps_t;					\
++	    break;							\
++	}								\
++    }									\
++} while (0)
++
++#define	rbp_rotate_left(a_type, a_field, a_node, r_node) do {		\
++    (r_node) = rbp_right_get(a_type, a_field, (a_node));		\
++    rbp_right_set(a_type, a_field, (a_node),				\
++      rbp_left_get(a_type, a_field, (r_node)));				\
++    rbp_left_set(a_type, a_field, (r_node), (a_node));			\
++} while (0)
++
++#define	rbp_rotate_right(a_type, a_field, a_node, r_node) do {		\
++    (r_node) = rbp_left_get(a_type, a_field, (a_node));			\
++    rbp_left_set(a_type, a_field, (a_node),				\
++      rbp_right_get(a_type, a_field, (r_node)));			\
++    rbp_right_set(a_type, a_field, (r_node), (a_node));			\
++} while (0)
++
++#define	rbp_lean_left(a_type, a_field, a_node, r_node) do {		\
++    bool rbp_ll_red;							\
++    rbp_rotate_left(a_type, a_field, (a_node), (r_node));		\
++    rbp_ll_red = rbp_red_get(a_type, a_field, (a_node));		\
++    rbp_color_set(a_type, a_field, (r_node), rbp_ll_red);		\
++    rbp_red_set(a_type, a_field, (a_node));				\
++} while (0)
++
++#define	rbp_lean_right(a_type, a_field, a_node, r_node) do {		\
++    bool rbp_lr_red;							\
++    rbp_rotate_right(a_type, a_field, (a_node), (r_node));		\
++    rbp_lr_red = rbp_red_get(a_type, a_field, (a_node));		\
++    rbp_color_set(a_type, a_field, (r_node), rbp_lr_red);		\
++    rbp_red_set(a_type, a_field, (a_node));				\
++} while (0)
++
++#define	rbp_move_red_left(a_type, a_field, a_node, r_node) do {		\
++    a_type *rbp_mrl_t, *rbp_mrl_u;					\
++    rbp_mrl_t = rbp_left_get(a_type, a_field, (a_node));		\
++    rbp_red_set(a_type, a_field, rbp_mrl_t);				\
++    rbp_mrl_t = rbp_right_get(a_type, a_field, (a_node));		\
++    rbp_mrl_u = rbp_left_get(a_type, a_field, rbp_mrl_t);		\
++    if (rbp_red_get(a_type, a_field, rbp_mrl_u)) {			\
++	rbp_rotate_right(a_type, a_field, rbp_mrl_t, rbp_mrl_u);	\
++	rbp_right_set(a_type, a_field, (a_node), rbp_mrl_u);		\
++	rbp_rotate_left(a_type, a_field, (a_node), (r_node));		\
++	rbp_mrl_t = rbp_right_get(a_type, a_field, (a_node));		\
++	if (rbp_red_get(a_type, a_field, rbp_mrl_t)) {			\
++	    rbp_black_set(a_type, a_field, rbp_mrl_t);			\
++	    rbp_red_set(a_type, a_field, (a_node));			\
++	    rbp_rotate_left(a_type, a_field, (a_node), rbp_mrl_t);	\
++	    rbp_left_set(a_type, a_field, (r_node), rbp_mrl_t);		\
++	} else {							\
++	    rbp_black_set(a_type, a_field, (a_node));			\
++	}								\
++    } else {								\
++	rbp_red_set(a_type, a_field, (a_node));				\
++	rbp_rotate_left(a_type, a_field, (a_node), (r_node));		\
++    }									\
++} while (0)
++
++#define	rbp_move_red_right(a_type, a_field, a_node, r_node) do {	\
++    a_type *rbp_mrr_t;							\
++    rbp_mrr_t = rbp_left_get(a_type, a_field, (a_node));		\
++    if (rbp_red_get(a_type, a_field, rbp_mrr_t)) {			\
++	a_type *rbp_mrr_u, *rbp_mrr_v;					\
++	rbp_mrr_u = rbp_right_get(a_type, a_field, rbp_mrr_t);		\
++	rbp_mrr_v = rbp_left_get(a_type, a_field, rbp_mrr_u);		\
++	if (rbp_red_get(a_type, a_field, rbp_mrr_v)) {			\
++	    rbp_color_set(a_type, a_field, rbp_mrr_u,			\
++	      rbp_red_get(a_type, a_field, (a_node)));			\
++	    rbp_black_set(a_type, a_field, rbp_mrr_v);			\
++	    rbp_rotate_left(a_type, a_field, rbp_mrr_t, rbp_mrr_u);	\
++	    rbp_left_set(a_type, a_field, (a_node), rbp_mrr_u);		\
++	    rbp_rotate_right(a_type, a_field, (a_node), (r_node));	\
++	    rbp_rotate_left(a_type, a_field, (a_node), rbp_mrr_t);	\
++	    rbp_right_set(a_type, a_field, (r_node), rbp_mrr_t);	\
++	} else {							\
++	    rbp_color_set(a_type, a_field, rbp_mrr_t,			\
++	      rbp_red_get(a_type, a_field, (a_node)));			\
++	    rbp_red_set(a_type, a_field, rbp_mrr_u);			\
++	    rbp_rotate_right(a_type, a_field, (a_node), (r_node));	\
++	    rbp_rotate_left(a_type, a_field, (a_node), rbp_mrr_t);	\
++	    rbp_right_set(a_type, a_field, (r_node), rbp_mrr_t);	\
++	}								\
++	rbp_red_set(a_type, a_field, (a_node));				\
++    } else {								\
++	rbp_red_set(a_type, a_field, rbp_mrr_t);			\
++	rbp_mrr_t = rbp_left_get(a_type, a_field, rbp_mrr_t);		\
++	if (rbp_red_get(a_type, a_field, rbp_mrr_t)) {			\
++	    rbp_black_set(a_type, a_field, rbp_mrr_t);			\
++	    rbp_rotate_right(a_type, a_field, (a_node), (r_node));	\
++	    rbp_rotate_left(a_type, a_field, (a_node), rbp_mrr_t);	\
++	    rbp_right_set(a_type, a_field, (r_node), rbp_mrr_t);	\
++	} else {							\
++	    rbp_rotate_left(a_type, a_field, (a_node), (r_node));	\
++	}								\
++    }									\
++} while (0)
++
++#define	rb_insert(a_type, a_field, a_cmp, a_tree, a_node) do {		\
++    a_type rbp_i_s;							\
++    a_type *rbp_i_g, *rbp_i_p, *rbp_i_c, *rbp_i_t, *rbp_i_u;		\
++    int rbp_i_cmp = 0;							\
++    rbp_i_g = &(a_tree)->rbt_nil;					\
++    rbp_left_set(a_type, a_field, &rbp_i_s, (a_tree)->rbt_root);	\
++    rbp_right_set(a_type, a_field, &rbp_i_s, &(a_tree)->rbt_nil);	\
++    rbp_black_set(a_type, a_field, &rbp_i_s);				\
++    rbp_i_p = &rbp_i_s;							\
++    rbp_i_c = (a_tree)->rbt_root;					\
++    /* Iteratively search down the tree for the insertion point,      */\
++    /* splitting 4-nodes as they are encountered.  At the end of each */\
++    /* iteration, rbp_i_g->rbp_i_p->rbp_i_c is a 3-level path down    */\
++    /* the tree, assuming a sufficiently deep tree.                   */\
++    while (rbp_i_c != &(a_tree)->rbt_nil) {				\
++	rbp_i_t = rbp_left_get(a_type, a_field, rbp_i_c);		\
++	rbp_i_u = rbp_left_get(a_type, a_field, rbp_i_t);		\
++	if (rbp_red_get(a_type, a_field, rbp_i_t)			\
++	  && rbp_red_get(a_type, a_field, rbp_i_u)) {			\
++	    /* rbp_i_c is the top of a logical 4-node, so split it.   */\
++	    /* This iteration does not move down the tree, due to the */\
++	    /* disruptiveness of node splitting.                      */\
++	    /*                                                        */\
++	    /* Rotate right.                                          */\
++	    rbp_rotate_right(a_type, a_field, rbp_i_c, rbp_i_t);	\
++	    /* Pass red links up one level.                           */\
++	    rbp_i_u = rbp_left_get(a_type, a_field, rbp_i_t);		\
++	    rbp_black_set(a_type, a_field, rbp_i_u);			\
++	    if (rbp_left_get(a_type, a_field, rbp_i_p) == rbp_i_c) {	\
++		rbp_left_set(a_type, a_field, rbp_i_p, rbp_i_t);	\
++		rbp_i_c = rbp_i_t;					\
++	    } else {							\
++		/* rbp_i_c was the right child of rbp_i_p, so rotate  */\
++		/* left in order to maintain the left-leaning         */\
++		/* invariant.                                         */\
++		assert(rbp_right_get(a_type, a_field, rbp_i_p)		\
++		  == rbp_i_c);						\
++		rbp_right_set(a_type, a_field, rbp_i_p, rbp_i_t);	\
++		rbp_lean_left(a_type, a_field, rbp_i_p, rbp_i_u);	\
++		if (rbp_left_get(a_type, a_field, rbp_i_g) == rbp_i_p) {\
++		    rbp_left_set(a_type, a_field, rbp_i_g, rbp_i_u);	\
++		} else {						\
++		    assert(rbp_right_get(a_type, a_field, rbp_i_g)	\
++		      == rbp_i_p);					\
++		    rbp_right_set(a_type, a_field, rbp_i_g, rbp_i_u);	\
++		}							\
++		rbp_i_p = rbp_i_u;					\
++		rbp_i_cmp = (a_cmp)((a_node), rbp_i_p);			\
++		if (rbp_i_cmp < 0) {					\
++		    rbp_i_c = rbp_left_get(a_type, a_field, rbp_i_p);	\
++		} else {						\
++		    assert(rbp_i_cmp > 0);				\
++		    rbp_i_c = rbp_right_get(a_type, a_field, rbp_i_p);	\
++		}							\
++		continue;						\
++	    }								\
++	}								\
++	rbp_i_g = rbp_i_p;						\
++	rbp_i_p = rbp_i_c;						\
++	rbp_i_cmp = (a_cmp)((a_node), rbp_i_c);				\
++	if (rbp_i_cmp < 0) {						\
++	    rbp_i_c = rbp_left_get(a_type, a_field, rbp_i_c);		\
++	} else {							\
++	    assert(rbp_i_cmp > 0);					\
++	    rbp_i_c = rbp_right_get(a_type, a_field, rbp_i_c);		\
++	}								\
++    }									\
++    /* rbp_i_p now refers to the node under which to insert.          */\
++    rbp_node_new(a_type, a_field, a_tree, (a_node));			\
++    if (rbp_i_cmp > 0) {						\
++	rbp_right_set(a_type, a_field, rbp_i_p, (a_node));		\
++	rbp_lean_left(a_type, a_field, rbp_i_p, rbp_i_t);		\
++	if (rbp_left_get(a_type, a_field, rbp_i_g) == rbp_i_p) {	\
++	    rbp_left_set(a_type, a_field, rbp_i_g, rbp_i_t);		\
++	} else if (rbp_right_get(a_type, a_field, rbp_i_g) == rbp_i_p) {\
++	    rbp_right_set(a_type, a_field, rbp_i_g, rbp_i_t);		\
++	}								\
++    } else {								\
++	rbp_left_set(a_type, a_field, rbp_i_p, (a_node));		\
++    }									\
++    /* Update the root and make sure that it is black.                */\
++    (a_tree)->rbt_root = rbp_left_get(a_type, a_field, &rbp_i_s);	\
++    rbp_black_set(a_type, a_field, (a_tree)->rbt_root);			\
++} while (0)
++
++#define	rb_remove(a_type, a_field, a_cmp, a_tree, a_node) do {		\
++    a_type rbp_r_s;							\
++    a_type *rbp_r_p, *rbp_r_c, *rbp_r_xp, *rbp_r_t, *rbp_r_u;		\
++    int rbp_r_cmp;							\
++    rbp_left_set(a_type, a_field, &rbp_r_s, (a_tree)->rbt_root);	\
++    rbp_right_set(a_type, a_field, &rbp_r_s, &(a_tree)->rbt_nil);	\
++    rbp_black_set(a_type, a_field, &rbp_r_s);				\
++    rbp_r_p = &rbp_r_s;							\
++    rbp_r_c = (a_tree)->rbt_root;					\
++    rbp_r_xp = &(a_tree)->rbt_nil;					\
++    /* Iterate down the tree, but always transform 2-nodes to 3- or   */\
++    /* 4-nodes in order to maintain the invariant that the current    */\
++    /* node is not a 2-node.  This allows simple deletion once a leaf */\
++    /* is reached.  Handle the root specially though, since there may */\
++    /* be no way to convert it from a 2-node to a 3-node.             */\
++    rbp_r_cmp = (a_cmp)((a_node), rbp_r_c);				\
++    if (rbp_r_cmp < 0) {						\
++	rbp_r_t = rbp_left_get(a_type, a_field, rbp_r_c);		\
++	rbp_r_u = rbp_left_get(a_type, a_field, rbp_r_t);		\
++	if (rbp_red_get(a_type, a_field, rbp_r_t) == false		\
++	  && rbp_red_get(a_type, a_field, rbp_r_u) == false) {		\
++	    /* Apply standard transform to prepare for left move.     */\
++	    rbp_move_red_left(a_type, a_field, rbp_r_c, rbp_r_t);	\
++	    rbp_black_set(a_type, a_field, rbp_r_t);			\
++	    rbp_left_set(a_type, a_field, rbp_r_p, rbp_r_t);		\
++	    rbp_r_c = rbp_r_t;						\
++	} else {							\
++	    /* Move left.                                             */\
++	    rbp_r_p = rbp_r_c;						\
++	    rbp_r_c = rbp_left_get(a_type, a_field, rbp_r_c);		\
++	}								\
++    } else {								\
++	if (rbp_r_cmp == 0) {						\
++	    assert((a_node) == rbp_r_c);				\
++	    if (rbp_right_get(a_type, a_field, rbp_r_c)			\
++	      == &(a_tree)->rbt_nil) {					\
++		/* Delete root node (which is also a leaf node).      */\
++		if (rbp_left_get(a_type, a_field, rbp_r_c)		\
++		  != &(a_tree)->rbt_nil) {				\
++		    rbp_lean_right(a_type, a_field, rbp_r_c, rbp_r_t);	\
++		    rbp_right_set(a_type, a_field, rbp_r_t,		\
++		      &(a_tree)->rbt_nil);				\
++		} else {						\
++		    rbp_r_t = &(a_tree)->rbt_nil;			\
++		}							\
++		rbp_left_set(a_type, a_field, rbp_r_p, rbp_r_t);	\
++	    } else {							\
++		/* This is the node we want to delete, but we will    */\
++		/* instead swap it with its successor and delete the  */\
++		/* successor.  Record enough information to do the    */\
++		/* swap later.  rbp_r_xp is the a_node's parent.      */\
++		rbp_r_xp = rbp_r_p;					\
++		rbp_r_cmp = 1; /* Note that deletion is incomplete.   */\
++	    }								\
++	}								\
++	if (rbp_r_cmp == 1) {						\
++	    if (rbp_red_get(a_type, a_field, rbp_left_get(a_type,	\
++	      a_field, rbp_right_get(a_type, a_field, rbp_r_c)))	\
++	      == false) {						\
++		rbp_r_t = rbp_left_get(a_type, a_field, rbp_r_c);	\
++		if (rbp_red_get(a_type, a_field, rbp_r_t)) {		\
++		    /* Standard transform.                            */\
++		    rbp_move_red_right(a_type, a_field, rbp_r_c,	\
++		      rbp_r_t);						\
++		} else {						\
++		    /* Root-specific transform.                       */\
++		    rbp_red_set(a_type, a_field, rbp_r_c);		\
++		    rbp_r_u = rbp_left_get(a_type, a_field, rbp_r_t);	\
++		    if (rbp_red_get(a_type, a_field, rbp_r_u)) {	\
++			rbp_black_set(a_type, a_field, rbp_r_u);	\
++			rbp_rotate_right(a_type, a_field, rbp_r_c,	\
++			  rbp_r_t);					\
++			rbp_rotate_left(a_type, a_field, rbp_r_c,	\
++			  rbp_r_u);					\
++			rbp_right_set(a_type, a_field, rbp_r_t,		\
++			  rbp_r_u);					\
++		    } else {						\
++			rbp_red_set(a_type, a_field, rbp_r_t);		\
++			rbp_rotate_left(a_type, a_field, rbp_r_c,	\
++			  rbp_r_t);					\
++		    }							\
++		}							\
++		rbp_left_set(a_type, a_field, rbp_r_p, rbp_r_t);	\
++		rbp_r_c = rbp_r_t;					\
++	    } else {							\
++		/* Move right.                                        */\
++		rbp_r_p = rbp_r_c;					\
++		rbp_r_c = rbp_right_get(a_type, a_field, rbp_r_c);	\
++	    }								\
++	}								\
++    }									\
++    if (rbp_r_cmp != 0) {						\
++	while (true) {							\
++	    assert(rbp_r_p != &(a_tree)->rbt_nil);			\
++	    rbp_r_cmp = (a_cmp)((a_node), rbp_r_c);			\
++	    if (rbp_r_cmp < 0) {					\
++		rbp_r_t = rbp_left_get(a_type, a_field, rbp_r_c);	\
++		if (rbp_r_t == &(a_tree)->rbt_nil) {			\
++		    /* rbp_r_c now refers to the successor node to    */\
++		    /* relocate, and rbp_r_xp/a_node refer to the     */\
++		    /* context for the relocation.                    */\
++		    if (rbp_left_get(a_type, a_field, rbp_r_xp)		\
++		      == (a_node)) {					\
++			rbp_left_set(a_type, a_field, rbp_r_xp,		\
++			  rbp_r_c);					\
++		    } else {						\
++			assert(rbp_right_get(a_type, a_field,		\
++			  rbp_r_xp) == (a_node));			\
++			rbp_right_set(a_type, a_field, rbp_r_xp,	\
++			  rbp_r_c);					\
++		    }							\
++		    rbp_left_set(a_type, a_field, rbp_r_c,		\
++		      rbp_left_get(a_type, a_field, (a_node)));		\
++		    rbp_right_set(a_type, a_field, rbp_r_c,		\
++		      rbp_right_get(a_type, a_field, (a_node)));	\
++		    rbp_color_set(a_type, a_field, rbp_r_c,		\
++		      rbp_red_get(a_type, a_field, (a_node)));		\
++		    if (rbp_left_get(a_type, a_field, rbp_r_p)		\
++		      == rbp_r_c) {					\
++			rbp_left_set(a_type, a_field, rbp_r_p,		\
++			  &(a_tree)->rbt_nil);				\
++		    } else {						\
++			assert(rbp_right_get(a_type, a_field, rbp_r_p)	\
++			  == rbp_r_c);					\
++			rbp_right_set(a_type, a_field, rbp_r_p,		\
++			  &(a_tree)->rbt_nil);				\
++		    }							\
++		    break;						\
++		}							\
++		rbp_r_u = rbp_left_get(a_type, a_field, rbp_r_t);	\
++		if (rbp_red_get(a_type, a_field, rbp_r_t) == false	\
++		  && rbp_red_get(a_type, a_field, rbp_r_u) == false) {	\
++		    rbp_move_red_left(a_type, a_field, rbp_r_c,		\
++		      rbp_r_t);						\
++		    if (rbp_left_get(a_type, a_field, rbp_r_p)		\
++		      == rbp_r_c) {					\
++			rbp_left_set(a_type, a_field, rbp_r_p, rbp_r_t);\
++		    } else {						\
++			rbp_right_set(a_type, a_field, rbp_r_p,		\
++			  rbp_r_t);					\
++		    }							\
++		    rbp_r_c = rbp_r_t;					\
++		} else {						\
++		    rbp_r_p = rbp_r_c;					\
++		    rbp_r_c = rbp_left_get(a_type, a_field, rbp_r_c);	\
++		}							\
++	    } else {							\
++		/* Check whether to delete this node (it has to be    */\
++		/* the correct node and a leaf node).                 */\
++		if (rbp_r_cmp == 0) {					\
++		    assert((a_node) == rbp_r_c);			\
++		    if (rbp_right_get(a_type, a_field, rbp_r_c)		\
++		      == &(a_tree)->rbt_nil) {				\
++			/* Delete leaf node.                          */\
++			if (rbp_left_get(a_type, a_field, rbp_r_c)	\
++			  != &(a_tree)->rbt_nil) {			\
++			    rbp_lean_right(a_type, a_field, rbp_r_c,	\
++			      rbp_r_t);					\
++			    rbp_right_set(a_type, a_field, rbp_r_t,	\
++			      &(a_tree)->rbt_nil);			\
++			} else {					\
++			    rbp_r_t = &(a_tree)->rbt_nil;		\
++			}						\
++			if (rbp_left_get(a_type, a_field, rbp_r_p)	\
++			  == rbp_r_c) {					\
++			    rbp_left_set(a_type, a_field, rbp_r_p,	\
++			      rbp_r_t);					\
++			} else {					\
++			    rbp_right_set(a_type, a_field, rbp_r_p,	\
++			      rbp_r_t);					\
++			}						\
++			break;						\
++		    } else {						\
++			/* This is the node we want to delete, but we */\
++			/* will instead swap it with its successor    */\
++			/* and delete the successor.  Record enough   */\
++			/* information to do the swap later.          */\
++			/* rbp_r_xp is a_node's parent.               */\
++			rbp_r_xp = rbp_r_p;				\
++		    }							\
++		}							\
++		rbp_r_t = rbp_right_get(a_type, a_field, rbp_r_c);	\
++		rbp_r_u = rbp_left_get(a_type, a_field, rbp_r_t);	\
++		if (rbp_red_get(a_type, a_field, rbp_r_u) == false) {	\
++		    rbp_move_red_right(a_type, a_field, rbp_r_c,	\
++		      rbp_r_t);						\
++		    if (rbp_left_get(a_type, a_field, rbp_r_p)		\
++		      == rbp_r_c) {					\
++			rbp_left_set(a_type, a_field, rbp_r_p, rbp_r_t);\
++		    } else {						\
++			rbp_right_set(a_type, a_field, rbp_r_p,		\
++			  rbp_r_t);					\
++		    }							\
++		    rbp_r_c = rbp_r_t;					\
++		} else {						\
++		    rbp_r_p = rbp_r_c;					\
++		    rbp_r_c = rbp_right_get(a_type, a_field, rbp_r_c);	\
++		}							\
++	    }								\
++	}								\
++    }									\
++    /* Update root.                                                   */\
++    (a_tree)->rbt_root = rbp_left_get(a_type, a_field, &rbp_r_s);	\
++} while (0)
++
++/*
++ * The rb_wrap() macro provides a convenient way to wrap functions around the
++ * cpp macros.  The main benefits of wrapping are that 1) repeated macro
++ * expansion can cause code bloat, especially for rb_{insert,remove)(), and
++ * 2) type, linkage, comparison functions, etc. need not be specified at every
++ * call point.
++ */
++
++#define	rb_wrap(a_attr, a_prefix, a_tree_type, a_type, a_field, a_cmp)	\
++a_attr void								\
++a_prefix##new(a_tree_type *tree) {					\
++    rb_new(a_type, a_field, tree);					\
++}									\
++a_attr a_type *								\
++a_prefix##first(a_tree_type *tree) {					\
++    a_type *ret;							\
++    rb_first(a_type, a_field, tree, ret);				\
++    return (ret);							\
++}									\
++a_attr a_type *								\
++a_prefix##last(a_tree_type *tree) {					\
++    a_type *ret;							\
++    rb_last(a_type, a_field, tree, ret);				\
++    return (ret);							\
++}									\
++a_attr a_type *								\
++a_prefix##next(a_tree_type *tree, a_type *node) {			\
++    a_type *ret;							\
++    rb_next(a_type, a_field, a_cmp, tree, node, ret);			\
++    return (ret);							\
++}									\
++a_attr a_type *								\
++a_prefix##prev(a_tree_type *tree, a_type *node) {			\
++    a_type *ret;							\
++    rb_prev(a_type, a_field, a_cmp, tree, node, ret);			\
++    return (ret);							\
++}									\
++a_attr a_type *								\
++a_prefix##search(a_tree_type *tree, a_type *key) {			\
++    a_type *ret;							\
++    rb_search(a_type, a_field, a_cmp, tree, key, ret);			\
++    return (ret);							\
++}									\
++a_attr a_type *								\
++a_prefix##nsearch(a_tree_type *tree, a_type *key) {			\
++    a_type *ret;							\
++    rb_nsearch(a_type, a_field, a_cmp, tree, key, ret);			\
++    return (ret);							\
++}									\
++a_attr a_type *								\
++a_prefix##psearch(a_tree_type *tree, a_type *key) {			\
++    a_type *ret;							\
++    rb_psearch(a_type, a_field, a_cmp, tree, key, ret);			\
++    return (ret);							\
++}									\
++a_attr void								\
++a_prefix##insert(a_tree_type *tree, a_type *node) {			\
++    rb_insert(a_type, a_field, a_cmp, tree, node);			\
++}									\
++a_attr void								\
++a_prefix##remove(a_tree_type *tree, a_type *node) {			\
++    rb_remove(a_type, a_field, a_cmp, tree, node);			\
++}
++
++/*
++ * The iterators simulate recursion via an array of pointers that store the
++ * current path.  This is critical to performance, since a series of calls to
++ * rb_{next,prev}() would require time proportional to (n lg n), whereas this
++ * implementation only requires time proportional to (n).
++ *
++ * Since the iterators cache a path down the tree, any tree modification may
++ * cause the cached path to become invalid.  In order to continue iteration,
++ * use something like the following sequence:
++ *
++ *   {
++ *       a_type *node, *tnode;
++ *
++ *       rb_foreach_begin(a_type, a_field, a_tree, node) {
++ *           ...
++ *           rb_next(a_type, a_field, a_cmp, a_tree, node, tnode);
++ *           rb_remove(a_type, a_field, a_cmp, a_tree, node);
++ *           rb_foreach_next(a_type, a_field, a_cmp, a_tree, tnode);
++ *           ...
++ *       } rb_foreach_end(a_type, a_field, a_tree, node)
++ *   }
++ *
++ * Note that this idiom is not advised if every iteration modifies the tree,
++ * since in that case there is no algorithmic complexity improvement over a
++ * series of rb_{next,prev}() calls, thus making the setup overhead wasted
++ * effort.
++ */
++
++#define	rb_foreach_begin(a_type, a_field, a_tree, a_var) {		\
++    /* Compute the maximum possible tree depth (3X the black height). */\
++    unsigned rbp_f_height;						\
++    rbp_black_height(a_type, a_field, a_tree, rbp_f_height);		\
++    rbp_f_height *= 3;							\
++    {									\
++	/* Initialize the path to contain the left spine.             */\
++	a_type *rbp_f_path[rbp_f_height];				\
++	a_type *rbp_f_node;						\
++	bool rbp_f_synced = false;					\
++	unsigned rbp_f_depth = 0;					\
++	if ((a_tree)->rbt_root != &(a_tree)->rbt_nil) {			\
++	    rbp_f_path[rbp_f_depth] = (a_tree)->rbt_root;		\
++	    rbp_f_depth++;						\
++	    while ((rbp_f_node = rbp_left_get(a_type, a_field,		\
++	      rbp_f_path[rbp_f_depth-1])) != &(a_tree)->rbt_nil) {	\
++		rbp_f_path[rbp_f_depth] = rbp_f_node;			\
++		rbp_f_depth++;						\
++	    }								\
++	}								\
++	/* While the path is non-empty, iterate.                      */\
++	while (rbp_f_depth > 0) {					\
++	    (a_var) = rbp_f_path[rbp_f_depth-1];
++
++/* Only use if modifying the tree during iteration. */
++#define	rb_foreach_next(a_type, a_field, a_cmp, a_tree, a_node)		\
++	    /* Re-initialize the path to contain the path to a_node.  */\
++	    rbp_f_depth = 0;						\
++	    if (a_node != NULL) {					\
++		if ((a_tree)->rbt_root != &(a_tree)->rbt_nil) {		\
++		    rbp_f_path[rbp_f_depth] = (a_tree)->rbt_root;	\
++		    rbp_f_depth++;					\
++		    rbp_f_node = rbp_f_path[0];				\
++		    while (true) {					\
++			int rbp_f_cmp = (a_cmp)((a_node),		\
++			  rbp_f_path[rbp_f_depth-1]);			\
++			if (rbp_f_cmp < 0) {				\
++			    rbp_f_node = rbp_left_get(a_type, a_field,	\
++			      rbp_f_path[rbp_f_depth-1]);		\
++			} else if (rbp_f_cmp > 0) {			\
++			    rbp_f_node = rbp_right_get(a_type, a_field,	\
++			      rbp_f_path[rbp_f_depth-1]);		\
++			} else {					\
++			    break;					\
++			}						\
++			assert(rbp_f_node != &(a_tree)->rbt_nil);	\
++			rbp_f_path[rbp_f_depth] = rbp_f_node;		\
++			rbp_f_depth++;					\
++		    }							\
++		}							\
++	    }								\
++	    rbp_f_synced = true;
++
++#define	rb_foreach_end(a_type, a_field, a_tree, a_var)			\
++	    if (rbp_f_synced) {						\
++		rbp_f_synced = false;					\
++		continue;						\
++	    }								\
++	    /* Find the successor.                                    */\
++	    if ((rbp_f_node = rbp_right_get(a_type, a_field,		\
++	      rbp_f_path[rbp_f_depth-1])) != &(a_tree)->rbt_nil) {	\
++	        /* The successor is the left-most node in the right   */\
++		/* subtree.                                           */\
++		rbp_f_path[rbp_f_depth] = rbp_f_node;			\
++		rbp_f_depth++;						\
++		while ((rbp_f_node = rbp_left_get(a_type, a_field,	\
++		  rbp_f_path[rbp_f_depth-1])) != &(a_tree)->rbt_nil) {	\
++		    rbp_f_path[rbp_f_depth] = rbp_f_node;		\
++		    rbp_f_depth++;					\
++		}							\
++	    } else {							\
++		/* The successor is above the current node.  Unwind   */\
++		/* until a left-leaning edge is removed from the      */\
++		/* path, or the path is empty.                        */\
++		for (rbp_f_depth--; rbp_f_depth > 0; rbp_f_depth--) {	\
++		    if (rbp_left_get(a_type, a_field,			\
++		      rbp_f_path[rbp_f_depth-1])			\
++		      == rbp_f_path[rbp_f_depth]) {			\
++			break;						\
++		    }							\
++		}							\
++	    }								\
++	}								\
++    }									\
++}
++
++#define	rb_foreach_reverse_begin(a_type, a_field, a_tree, a_var) {	\
++    /* Compute the maximum possible tree depth (3X the black height). */\
++    unsigned rbp_fr_height;						\
++    rbp_black_height(a_type, a_field, a_tree, rbp_fr_height);		\
++    rbp_fr_height *= 3;							\
++    {									\
++	/* Initialize the path to contain the right spine.            */\
++	a_type *rbp_fr_path[rbp_fr_height];				\
++	a_type *rbp_fr_node;						\
++	bool rbp_fr_synced = false;					\
++	unsigned rbp_fr_depth = 0;					\
++	if ((a_tree)->rbt_root != &(a_tree)->rbt_nil) {			\
++	    rbp_fr_path[rbp_fr_depth] = (a_tree)->rbt_root;		\
++	    rbp_fr_depth++;						\
++	    while ((rbp_fr_node = rbp_right_get(a_type, a_field,	\
++	      rbp_fr_path[rbp_fr_depth-1])) != &(a_tree)->rbt_nil) {	\
++		rbp_fr_path[rbp_fr_depth] = rbp_fr_node;		\
++		rbp_fr_depth++;						\
++	    }								\
++	}								\
++	/* While the path is non-empty, iterate.                      */\
++	while (rbp_fr_depth > 0) {					\
++	    (a_var) = rbp_fr_path[rbp_fr_depth-1];
++
++/* Only use if modifying the tree during iteration. */
++#define	rb_foreach_reverse_prev(a_type, a_field, a_cmp, a_tree, a_node)	\
++	    /* Re-initialize the path to contain the path to a_node.  */\
++	    rbp_fr_depth = 0;						\
++	    if (a_node != NULL) {					\
++		if ((a_tree)->rbt_root != &(a_tree)->rbt_nil) {		\
++		    rbp_fr_path[rbp_fr_depth] = (a_tree)->rbt_root;	\
++		    rbp_fr_depth++;					\
++		    rbp_fr_node = rbp_fr_path[0];			\
++		    while (true) {					\
++			int rbp_fr_cmp = (a_cmp)((a_node),		\
++			  rbp_fr_path[rbp_fr_depth-1]);			\
++			if (rbp_fr_cmp < 0) {				\
++			    rbp_fr_node = rbp_left_get(a_type, a_field,	\
++			      rbp_fr_path[rbp_fr_depth-1]);		\
++			} else if (rbp_fr_cmp > 0) {			\
++			    rbp_fr_node = rbp_right_get(a_type, a_field,\
++			      rbp_fr_path[rbp_fr_depth-1]);		\
++			} else {					\
++			    break;					\
++			}						\
++			assert(rbp_fr_node != &(a_tree)->rbt_nil);	\
++			rbp_fr_path[rbp_fr_depth] = rbp_fr_node;	\
++			rbp_fr_depth++;					\
++		    }							\
++		}							\
++	    }								\
++	    rbp_fr_synced = true;
++
++#define	rb_foreach_reverse_end(a_type, a_field, a_tree, a_var)		\
++	    if (rbp_fr_synced) {					\
++		rbp_fr_synced = false;					\
++		continue;						\
++	    }								\
++	    if (rbp_fr_depth == 0) {					\
++		/* rb_foreach_reverse_sync() was called with a NULL   */\
++		/* a_node.                                            */\
++		break;							\
++	    }								\
++	    /* Find the predecessor.                                  */\
++	    if ((rbp_fr_node = rbp_left_get(a_type, a_field,		\
++	      rbp_fr_path[rbp_fr_depth-1])) != &(a_tree)->rbt_nil) {	\
++	        /* The predecessor is the right-most node in the left */\
++		/* subtree.                                           */\
++		rbp_fr_path[rbp_fr_depth] = rbp_fr_node;		\
++		rbp_fr_depth++;						\
++		while ((rbp_fr_node = rbp_right_get(a_type, a_field,	\
++		  rbp_fr_path[rbp_fr_depth-1])) != &(a_tree)->rbt_nil) {\
++		    rbp_fr_path[rbp_fr_depth] = rbp_fr_node;		\
++		    rbp_fr_depth++;					\
++		}							\
++	    } else {							\
++		/* The predecessor is above the current node.  Unwind */\
++		/* until a right-leaning edge is removed from the     */\
++		/* path, or the path is empty.                        */\
++		for (rbp_fr_depth--; rbp_fr_depth > 0; rbp_fr_depth--) {\
++		    if (rbp_right_get(a_type, a_field,			\
++		      rbp_fr_path[rbp_fr_depth-1])			\
++		      == rbp_fr_path[rbp_fr_depth]) {			\
++			break;						\
++		    }							\
++		}							\
++	    }								\
++	}								\
++    }									\
++}
++
++#include <sys/cdefs.h>
++
++#ifdef MALLOC_DEBUG
++#  define _LOCK_DEBUG
++#endif
++#include <sys/mman.h>
++#include <sys/param.h>
++#include <sys/time.h>
++#include <sys/types.h>
++#include <sys/sysctl.h>
++#include <sys/uio.h>
++
++#include <errno.h>
++#include <limits.h>
++#include <limits.h>
++#ifndef SIZE_T_MAX
++#  define SIZE_T_MAX	SIZE_MAX
++#endif
++#include <sched.h>
++#include <stdarg.h>
++#include <stdbool.h>
++#include <stdio.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <strings.h>
++#include <unistd.h>
++
++#ifdef MALLOC_DEBUG
++#  ifdef NDEBUG
++#    undef NDEBUG
++#  endif
++#else
++#  ifndef NDEBUG
++#    define NDEBUG
++#  endif
++#endif
++#include <assert.h>
++
++#ifdef MALLOC_DEBUG
++   /* Disable inlining to make debugging easier. */
++#  define inline
++#endif
++
++/* Size of stack-allocated buffer passed to strerror_r(). */
++#define	STRERROR_BUF		64
++
++/* Minimum alignment of allocations is 2^QUANTUM_2POW_MIN bytes. */
++#ifdef __i386__
++#  define QUANTUM_2POW_MIN	4
++#  define SIZEOF_PTR_2POW	2
++#  define CPU_SPINWAIT		__asm__ volatile("pause")
++#endif
++#ifdef __ia64__
++#  define QUANTUM_2POW_MIN	4
++#  define SIZEOF_PTR_2POW	3
++#endif
++#ifdef __alpha__
++#  define QUANTUM_2POW_MIN	4
++#  define SIZEOF_PTR_2POW	3
++#  define NO_TLS
++#endif
++#ifdef __sparc64__
++#  define QUANTUM_2POW_MIN	4
++#  define SIZEOF_PTR_2POW	3
++#  define NO_TLS
++#endif
++#ifdef __amd64__
++#  define QUANTUM_2POW_MIN	4
++#  define SIZEOF_PTR_2POW	3
++#  define CPU_SPINWAIT		__asm__ volatile("pause")
++#endif
++#ifdef __arm__
++#  define QUANTUM_2POW_MIN	3
++#  define SIZEOF_PTR_2POW	2
++#  define NO_TLS
++#endif
++#ifdef __mips__
++#  define QUANTUM_2POW_MIN	3
++#  define SIZEOF_PTR_2POW	2
++#  define NO_TLS
++#endif
++#ifdef __powerpc__
++#  define QUANTUM_2POW_MIN	4
++#  define SIZEOF_PTR_2POW	2
++#endif
++
++#define	SIZEOF_PTR		(1U << SIZEOF_PTR_2POW)
++
++/* sizeof(int) == (1U << SIZEOF_INT_2POW). */
++#ifndef SIZEOF_INT_2POW
++#  define SIZEOF_INT_2POW	2
++#endif
++
++/* We can't use TLS in non-PIC programs, since TLS relies on loader magic. */
++#if (!defined(PIC) && !defined(NO_TLS))
++#  define NO_TLS
++#endif
++
++#ifdef NO_TLS
++   /* MALLOC_BALANCE requires TLS. */
++#  ifdef MALLOC_BALANCE
++#    undef MALLOC_BALANCE
++#  endif
++#endif
++
++/*
++ * Size and alignment of memory chunks that are allocated by the OS's virtual
++ * memory system.
++ */
++#define	CHUNK_2POW_DEFAULT	20
++
++/* Maximum number of dirty pages per arena. */
++#define	DIRTY_MAX_DEFAULT	(1U << 9)
++
++/*
++ * Maximum size of L1 cache line.  This is used to avoid cache line aliasing,
++ * so over-estimates are okay (up to a point), but under-estimates will
++ * negatively affect performance.
++ */
++#define	CACHELINE_2POW		6
++#define	CACHELINE		((size_t)(1U << CACHELINE_2POW))
++
++/* Smallest size class to support. */
++#define	TINY_MIN_2POW		1
++
++/*
++ * Maximum size class that is a multiple of the quantum, but not (necessarily)
++ * a power of 2.  Above this size, allocations are rounded up to the nearest
++ * power of 2.
++ */
++#define	SMALL_MAX_2POW_DEFAULT	9
++#define	SMALL_MAX_DEFAULT	(1U << SMALL_MAX_2POW_DEFAULT)
++
++/*
++ * RUN_MAX_OVRHD indicates maximum desired run header overhead.  Runs are sized
++ * as small as possible such that this setting is still honored, without
++ * violating other constraints.  The goal is to make runs as small as possible
++ * without exceeding a per run external fragmentation threshold.
++ *
++ * We use binary fixed point math for overhead computations, where the binary
++ * point is implicitly RUN_BFP bits to the left.
++ *
++ * Note that it is possible to set RUN_MAX_OVRHD low enough that it cannot be
++ * honored for some/all object sizes, since there is one bit of header overhead
++ * per object (plus a constant).  This constraint is relaxed (ignored) for runs
++ * that are so small that the per-region overhead is greater than:
++ *
++ *   (RUN_MAX_OVRHD / (reg_size << (3+RUN_BFP))
++ */
++#define	RUN_BFP			12
++/*                                    \/   Implicit binary fixed point. */
++#define	RUN_MAX_OVRHD		0x0000003dU
++#define	RUN_MAX_OVRHD_RELAX	0x00001800U
++
++/* Put a cap on small object run size.  This overrides RUN_MAX_OVRHD. */
++#define	RUN_MAX_SMALL_2POW	15
++#define	RUN_MAX_SMALL		(1U << RUN_MAX_SMALL_2POW)
++
++/*
++ * Hyper-threaded CPUs may need a special instruction inside spin loops in
++ * order to yield to another virtual CPU.  If no such instruction is defined
++ * above, make CPU_SPINWAIT a no-op.
++ */
++#ifndef CPU_SPINWAIT
++#  define CPU_SPINWAIT
++#endif
++
++/*
++ * Adaptive spinning must eventually switch to blocking, in order to avoid the
++ * potential for priority inversion deadlock.  Backing off past a certain point
++ * can actually waste time.
++ */
++#define	SPIN_LIMIT_2POW		11
++
++/*
++ * Conversion from spinning to blocking is expensive; we use (1U <<
++ * BLOCK_COST_2POW) to estimate how many more times costly blocking is than
++ * worst-case spinning.
++ */
++#define	BLOCK_COST_2POW		4
++
++#ifdef MALLOC_BALANCE
++   /*
++    * We use an exponential moving average to track recent lock contention,
++    * where the size of the history window is N, and alpha=2/(N+1).
++    *
++    * Due to integer math rounding, very small values here can cause
++    * substantial degradation in accuracy, thus making the moving average decay
++    * faster than it would with precise calculation.
++    */
++#  define BALANCE_ALPHA_INV_2POW	9
++
++   /*
++    * Threshold value for the exponential moving contention average at which to
++    * re-assign a thread.
++    */
++#  define BALANCE_THRESHOLD_DEFAULT	(1U << (SPIN_LIMIT_2POW-4))
++#endif
++
++/******************************************************************************/
++
++/* Set to true once the allocator has been initialized. */
++static bool malloc_initialized = false;
++
++/******************************************************************************/
++/*
++ * Statistics data structures.
++ */
++
++#ifdef MALLOC_STATS
++
++typedef struct malloc_bin_stats_s malloc_bin_stats_t;
++struct malloc_bin_stats_s {
++	/*
++	 * Number of allocation requests that corresponded to the size of this
++	 * bin.
++	 */
++	uint64_t	nrequests;
++
++	/* Total number of runs created for this bin's size class. */
++	uint64_t	nruns;
++
++	/*
++	 * Total number of runs reused by extracting them from the runs tree for
++	 * this bin's size class.
++	 */
++	uint64_t	reruns;
++
++	/* High-water mark for this bin. */
++	unsigned long	highruns;
++
++	/* Current number of runs in this bin. */
++	unsigned long	curruns;
++};
++
++typedef struct arena_stats_s arena_stats_t;
++struct arena_stats_s {
++	/* Number of bytes currently mapped. */
++	size_t		mapped;
++
++	/*
++	 * Total number of purge sweeps, total number of madvise calls made,
++	 * and total pages purged in order to keep dirty unused memory under
++	 * control.
++	 */
++	uint64_t	npurge;
++	uint64_t	nmadvise;
++	uint64_t	purged;
++
++	/* Per-size-category statistics. */
++	size_t		allocated_small;
++	uint64_t	nmalloc_small;
++	uint64_t	ndalloc_small;
++
++	size_t		allocated_large;
++	uint64_t	nmalloc_large;
++	uint64_t	ndalloc_large;
++
++#ifdef MALLOC_BALANCE
++	/* Number of times this arena reassigned a thread due to contention. */
++	uint64_t	nbalance;
++#endif
++};
++
++typedef struct chunk_stats_s chunk_stats_t;
++struct chunk_stats_s {
++	/* Number of chunks that were allocated. */
++	uint64_t	nchunks;
++
++	/* High-water mark for number of chunks allocated. */
++	unsigned long	highchunks;
++
++	/*
++	 * Current number of chunks allocated.  This value isn't maintained for
++	 * any other purpose, so keep track of it in order to be able to set
++	 * highchunks.
++	 */
++	unsigned long	curchunks;
++};
++
++#endif /* #ifdef MALLOC_STATS */
++
++/******************************************************************************/
++/*
++ * Extent data structures.
++ */
++
++/* Tree of extents. */
++typedef struct extent_node_s extent_node_t;
++struct extent_node_s {
++#ifdef MALLOC_DSS
++	/* Linkage for the size/address-ordered tree. */
++	rb_node(extent_node_t) link_szad;
++#endif
++
++	/* Linkage for the address-ordered tree. */
++	rb_node(extent_node_t) link_ad;
++
++	/* Pointer to the extent that this tree node is responsible for. */
++	void	*addr;
++
++	/* Total region size. */
++	size_t	size;
++};
++typedef rb_tree(extent_node_t) extent_tree_t;
++
++/******************************************************************************/
++/*
++ * Arena data structures.
++ */
++
++typedef struct arena_s arena_t;
++typedef struct arena_bin_s arena_bin_t;
++
++/* Each element of the chunk map corresponds to one page within the chunk. */
++typedef struct arena_chunk_map_s arena_chunk_map_t;
++struct arena_chunk_map_s {
++	/*
++	 * Linkage for run trees.  There are two disjoint uses:
++	 *
++	 * 1) arena_t's runs_avail tree.
++	 * 2) arena_run_t conceptually uses this linkage for in-use non-full
++	 *    runs, rather than directly embedding linkage.
++	 */
++	rb_node(arena_chunk_map_t)	link;
++
++	/*
++	 * Run address (or size) and various flags are stored together.  The bit
++	 * layout looks like (assuming 32-bit system):
++	 *
++	 *   ???????? ???????? ????---- ---kdzla
++	 *
++	 * ? : Unallocated: Run address for first/last pages, unset for internal
++	 *                  pages.
++	 *     Small: Run address.
++	 *     Large: Run size for first page, unset for trailing pages.
++	 * - : Unused.
++	 * k : key?
++	 * d : dirty?
++	 * z : zeroed?
++	 * l : large?
++	 * a : allocated?
++	 *
++	 * Following are example bit patterns for the three types of runs.
++	 *
++	 * r : run address
++	 * s : run size
++	 * x : don't care
++	 * - : 0
++	 * [dzla] : bit set
++	 *
++	 *   Unallocated:
++	 *     ssssssss ssssssss ssss---- --------
++	 *     xxxxxxxx xxxxxxxx xxxx---- ----d---
++	 *     ssssssss ssssssss ssss---- -----z--
++	 *
++	 *   Small:
++	 *     rrrrrrrr rrrrrrrr rrrr---- -------a
++	 *     rrrrrrrr rrrrrrrr rrrr---- -------a
++	 *     rrrrrrrr rrrrrrrr rrrr---- -------a
++	 *
++	 *   Large:
++	 *     ssssssss ssssssss ssss---- ------la
++	 *     -------- -------- -------- ------la
++	 *     -------- -------- -------- ------la
++	 */
++	size_t				bits;
++#define	CHUNK_MAP_KEY		((size_t)0x10U)
++#define	CHUNK_MAP_DIRTY		((size_t)0x08U)
++#define	CHUNK_MAP_ZEROED	((size_t)0x04U)
++#define	CHUNK_MAP_LARGE		((size_t)0x02U)
++#define	CHUNK_MAP_ALLOCATED	((size_t)0x01U)
++};
++typedef rb_tree(arena_chunk_map_t) arena_avail_tree_t;
++typedef rb_tree(arena_chunk_map_t) arena_run_tree_t;
++
++/* Arena chunk header. */
++typedef struct arena_chunk_s arena_chunk_t;
++struct arena_chunk_s {
++	/* Arena that owns the chunk. */
++	arena_t		*arena;
++
++	/* Linkage for the arena's chunks_dirty tree. */
++	rb_node(arena_chunk_t) link_dirty;
++
++	/* Number of dirty pages. */
++	size_t		ndirty;
++
++	/* Map of pages within chunk that keeps track of free/large/small. */
++	arena_chunk_map_t map[1]; /* Dynamically sized. */
++};
++typedef rb_tree(arena_chunk_t) arena_chunk_tree_t;
++
++typedef struct arena_run_s arena_run_t;
++struct arena_run_s {
++#ifdef MALLOC_DEBUG
++	uint32_t	magic;
++#  define ARENA_RUN_MAGIC 0x384adf93
++#endif
++
++	/* Bin this run is associated with. */
++	arena_bin_t	*bin;
++
++	/* Index of first element that might have a free region. */
++	unsigned	regs_minelm;
++
++	/* Number of free regions in run. */
++	unsigned	nfree;
++
++	/* Bitmask of in-use regions (0: in use, 1: free). */
++	unsigned	regs_mask[1]; /* Dynamically sized. */
++};
++
++struct arena_bin_s {
++	/*
++	 * Current run being used to service allocations of this bin's size
++	 * class.
++	 */
++	arena_run_t	*runcur;
++
++	/*
++	 * Tree of non-full runs.  This tree is used when looking for an
++	 * existing run when runcur is no longer usable.  We choose the
++	 * non-full run that is lowest in memory; this policy tends to keep
++	 * objects packed well, and it can also help reduce the number of
++	 * almost-empty chunks.
++	 */
++	arena_run_tree_t runs;
++
++	/* Size of regions in a run for this bin's size class. */
++	size_t		reg_size;
++
++	/* Total size of a run for this bin's size class. */
++	size_t		run_size;
++
++	/* Total number of regions in a run for this bin's size class. */
++	uint32_t	nregs;
++
++	/* Number of elements in a run's regs_mask for this bin's size class. */
++	uint32_t	regs_mask_nelms;
++
++	/* Offset of first region in a run for this bin's size class. */
++	uint32_t	reg0_offset;
++
++#ifdef MALLOC_STATS
++	/* Bin statistics. */
++	malloc_bin_stats_t stats;
++#endif
++};
++
++struct arena_s {
++#ifdef MALLOC_DEBUG
++	uint32_t		magic;
++#  define ARENA_MAGIC 0x947d3d24
++#endif
++
++#ifdef MALLOC_STATS
++	arena_stats_t		stats;
++#endif
++
++	/* Tree of dirty-page-containing chunks this arena manages. */
++	arena_chunk_tree_t	chunks_dirty;
++
++	/*
++	 * In order to avoid rapid chunk allocation/deallocation when an arena
++	 * oscillates right on the cusp of needing a new chunk, cache the most
++	 * recently freed chunk.  The spare is left in the arena's chunk trees
++	 * until it is deleted.
++	 *
++	 * There is one spare chunk per arena, rather than one spare total, in
++	 * order to avoid interactions between multiple threads that could make
++	 * a single spare inadequate.
++	 */
++	arena_chunk_t		*spare;
++
++	/*
++	 * Current count of pages within unused runs that are potentially
++	 * dirty, and for which madvise(... MADV_FREE) has not been called.  By
++	 * tracking this, we can institute a limit on how much dirty unused
++	 * memory is mapped for each arena.
++	 */
++	size_t			ndirty;
++
++	/*
++	 * Size/address-ordered tree of this arena's available runs.  This tree
++	 * is used for first-best-fit run allocation.
++	 */
++	arena_avail_tree_t	runs_avail;
++
++#ifdef MALLOC_BALANCE
++	/*
++	 * The arena load balancing machinery needs to keep track of how much
++	 * lock contention there is.  This value is exponentially averaged.
++	 */
++	uint32_t		contention;
++#endif
++
++	/*
++	 * bins is used to store rings of free regions of the following sizes,
++	 * assuming a 16-byte quantum, 4kB pagesize, and default MALLOC_OPTIONS.
++	 *
++	 *   bins[i] | size |
++	 *   --------+------+
++	 *        0  |    2 |
++	 *        1  |    4 |
++	 *        2  |    8 |
++	 *   --------+------+
++	 *        3  |   16 |
++	 *        4  |   32 |
++	 *        5  |   48 |
++	 *        6  |   64 |
++	 *           :      :
++	 *           :      :
++	 *       33  |  496 |
++	 *       34  |  512 |
++	 *   --------+------+
++	 *       35  | 1024 |
++	 *       36  | 2048 |
++	 *   --------+------+
++	 */
++	arena_bin_t		bins[1]; /* Dynamically sized. */
++};
++
++/******************************************************************************/
++/*
++ * Data.
++ */
++
++/* Number of CPUs. */
++static unsigned		ncpus;
++
++/* VM page size. */
++static size_t		pagesize;
++static size_t		pagesize_mask;
++static size_t		pagesize_2pow;
++
++/* Various bin-related settings. */
++static size_t		bin_maxclass; /* Max size class for bins. */
++static unsigned		ntbins; /* Number of (2^n)-spaced tiny bins. */
++static unsigned		nqbins; /* Number of quantum-spaced bins. */
++static unsigned		nsbins; /* Number of (2^n)-spaced sub-page bins. */
++static size_t		small_min;
++static size_t		small_max;
++
++/* Various quantum-related settings. */
++static size_t		quantum;
++static size_t		quantum_mask; /* (quantum - 1). */
++
++/* Various chunk-related settings. */
++static size_t		chunksize;
++static size_t		chunksize_mask; /* (chunksize - 1). */
++static size_t		chunk_npages;
++static size_t		arena_chunk_header_npages;
++static size_t		arena_maxclass; /* Max size class for arenas. */
++
++/********/
++/*
++ * Chunks.
++ */
++
++/* Tree of chunks that are stand-alone huge allocations. */
++static extent_tree_t	huge;
++
++#ifdef MALLOC_DSS
++/*
++ * Protects sbrk() calls.  This avoids malloc races among threads, though it
++ * does not protect against races with threads that call sbrk() directly.
++ */
++
++/* Base address of the DSS. */
++static void		*dss_base;
++/* Current end of the DSS, or ((void *)-1) if the DSS is exhausted. */
++static void		*dss_prev;
++/* Current upper limit on DSS addresses. */
++static void		*dss_max;
++
++/*
++ * Trees of chunks that were previously allocated (trees differ only in node
++ * ordering).  These are used when allocating chunks, in an attempt to re-use
++ * address space.  Depending on function, different tree orderings are needed,
++ * which is why there are two trees with the same contents.
++ */
++static extent_tree_t	dss_chunks_szad;
++static extent_tree_t	dss_chunks_ad;
++#endif
++
++#ifdef MALLOC_STATS
++/* Huge allocation statistics. */
++static uint64_t		huge_nmalloc;
++static uint64_t		huge_ndalloc;
++static size_t		huge_allocated;
++#endif
++
++/****************************/
++/*
++ * base (internal allocation).
++ */
++
++/*
++ * Current pages that are being used for internal memory allocations.  These
++ * pages are carved up in cacheline-size quanta, so that there is no chance of
++ * false cache line sharing.
++ */
++static void		*base_pages;
++static void		*base_next_addr;
++static void		*base_past_addr; /* Addr immediately past base_pages. */
++static extent_node_t	*base_nodes;
++#ifdef MALLOC_STATS
++static size_t		base_mapped;
++#endif
++
++/********/
++/*
++ * Arenas.
++ */
++
++/*
++ * Arenas that are used to service external requests.  Not all elements of the
++ * arenas array are necessarily used; arenas are created lazily as needed.
++ */
++static arena_t		**arenas;
++static unsigned		narenas;
++#ifndef NO_TLS
++#  ifdef MALLOC_BALANCE
++static unsigned		narenas_2pow;
++#  else
++static unsigned		next_arena;
++#  endif
++#endif
++
++#ifndef NO_TLS
++/*
++ * Map of pthread_self() --> arenas[???], used for selecting an arena to use
++ * for allocations.
++ */
++static __thread arena_t	*arenas_map;
++#endif
++
++#ifdef MALLOC_STATS
++/* Chunk statistics. */
++static chunk_stats_t	stats_chunks;
++#endif
++
++/*******************************/
++/*
++ * Runtime configuration options.
++ */
++const char	*_malloc_options;
++
++#ifndef MALLOC_PRODUCTION
++static bool	opt_abort = true;
++static bool	opt_junk = true;
++#else
++static bool	opt_abort = false;
++static bool	opt_junk = false;
++#endif
++#ifdef MALLOC_DSS
++static bool	opt_dss = true;
++static bool	opt_mmap = true;
++#endif
++static size_t	opt_dirty_max = DIRTY_MAX_DEFAULT;
++#ifdef MALLOC_BALANCE
++static uint64_t	opt_balance_threshold = BALANCE_THRESHOLD_DEFAULT;
++#endif
++static bool	opt_print_stats = false;
++static size_t	opt_quantum_2pow = QUANTUM_2POW_MIN;
++static size_t	opt_small_max_2pow = SMALL_MAX_2POW_DEFAULT;
++static size_t	opt_chunk_2pow = CHUNK_2POW_DEFAULT;
++static bool	opt_utrace = false;
++static bool	opt_sysv = false;
++static bool	opt_xmalloc = false;
++static bool	opt_zero = false;
++static int	opt_narenas_lshift = 0;
++
++typedef struct {
++	void	*p;
++	size_t	s;
++	void	*r;
++} malloc_utrace_t;
++
++#define	UTRACE(a, b, c)							\
++	if (opt_utrace) {						\
++		malloc_utrace_t ut;					\
++		ut.p = (a);						\
++		ut.s = (b);						\
++		ut.r = (c);						\
++		utrace(&ut, sizeof(ut));				\
++	}
++
++/******************************************************************************/
++/*
++ * Begin function prototypes for non-inline static functions.
++ */
++
++static void	wrtmessage(const char *p2, const char *p3, const char *p4);
++#ifdef MALLOC_STATS
++static void	malloc_printf(const char *format, ...);
++#endif
++static char	*umax2s(uintmax_t x, char *s);
++#ifdef MALLOC_DSS
++static bool	base_pages_alloc_dss(size_t minsize);
++#endif
++static bool	base_pages_alloc_mmap(size_t minsize);
++static bool	base_pages_alloc(size_t minsize);
++static void	*base_alloc(size_t size);
++static void	*base_calloc(size_t number, size_t size);
++static extent_node_t *base_node_alloc(void);
++static void	base_node_dealloc(extent_node_t *node);
++#ifdef MALLOC_STATS
++static void	stats_print(arena_t *arena);
++#endif
++static void	*pages_map(void *addr, size_t size);
++static void	pages_unmap(void *addr, size_t size);
++#ifdef MALLOC_DSS
++static void	*chunk_alloc_dss(size_t size);
++static void	*chunk_recycle_dss(size_t size, bool zero);
++#endif
++static void	*chunk_alloc_mmap(size_t size);
++static void	*chunk_alloc(size_t size, bool zero);
++#ifdef MALLOC_DSS
++static extent_node_t *chunk_dealloc_dss_record(void *chunk, size_t size);
++static bool	chunk_dealloc_dss(void *chunk, size_t size);
++#endif
++static void	chunk_dealloc_mmap(void *chunk, size_t size);
++static void	chunk_dealloc(void *chunk, size_t size);
++#ifndef NO_TLS
++static arena_t	*choose_arena_hard(void);
++#endif
++static void	arena_run_split(arena_t *arena, arena_run_t *run, size_t size,
++    bool large, bool zero);
++static arena_chunk_t *arena_chunk_alloc(arena_t *arena);
++static void	arena_chunk_dealloc(arena_t *arena, arena_chunk_t *chunk);
++static arena_run_t *arena_run_alloc(arena_t *arena, size_t size, bool large,
++    bool zero);
++static void	arena_purge(arena_t *arena);
++static void	arena_run_dalloc(arena_t *arena, arena_run_t *run, bool dirty);
++static void	arena_run_trim_head(arena_t *arena, arena_chunk_t *chunk,
++    arena_run_t *run, size_t oldsize, size_t newsize);
++static void	arena_run_trim_tail(arena_t *arena, arena_chunk_t *chunk,
++    arena_run_t *run, size_t oldsize, size_t newsize, bool dirty);
++static arena_run_t *arena_bin_nonfull_run_get(arena_t *arena, arena_bin_t *bin);
++static void *arena_bin_malloc_hard(arena_t *arena, arena_bin_t *bin);
++static size_t arena_bin_run_size_calc(arena_bin_t *bin, size_t min_run_size);
++#ifdef MALLOC_BALANCE
++static void	arena_lock_balance_hard(arena_t *arena);
++#endif
++static void	*arena_malloc_large(arena_t *arena, size_t size, bool zero);
++static void	*arena_palloc(arena_t *arena, size_t alignment, size_t size,
++    size_t alloc_size);
++static size_t	arena_salloc(const void *ptr);
++static void	arena_dalloc_large(arena_t *arena, arena_chunk_t *chunk,
++    void *ptr);
++static void	arena_ralloc_large_shrink(arena_t *arena, arena_chunk_t *chunk,
++    void *ptr, size_t size, size_t oldsize);
++static bool	arena_ralloc_large_grow(arena_t *arena, arena_chunk_t *chunk,
++    void *ptr, size_t size, size_t oldsize);
++static bool	arena_ralloc_large(void *ptr, size_t size, size_t oldsize);
++static void	*arena_ralloc(void *ptr, size_t size, size_t oldsize);
++static bool	arena_new(arena_t *arena);
++static arena_t	*arenas_extend(unsigned ind);
++static void	*huge_malloc(size_t size, bool zero);
++static void	*huge_palloc(size_t alignment, size_t size);
++static void	*huge_ralloc(void *ptr, size_t size, size_t oldsize);
++static void	huge_dalloc(void *ptr);
++static void	malloc_print_stats(void);
++static bool	malloc_init_hard(void);
++
++/*
++ * End function prototypes.
++ */
++
++/******************************************************************************/
++/*
++ * Begin spin lock.  Spin locks here are actually adaptive mutexes that block
++ * after a period of spinning, because unbounded spinning would allow for
++ * priority inversion.
++ */
++
++/******************************************************************************/
++/*
++ * Begin Utility functions/macros.
++ */
++
++/* Return the chunk address for allocation address a. */
++#define	CHUNK_ADDR2BASE(a)						\
++	((void *)((uintptr_t)(a) & ~chunksize_mask))
++
++/* Return the chunk offset of address a. */
++#define	CHUNK_ADDR2OFFSET(a)						\
++	((size_t)((uintptr_t)(a) & chunksize_mask))
++
++/* Return the smallest chunk multiple that is >= s. */
++#define	CHUNK_CEILING(s)						\
++	(((s) + chunksize_mask) & ~chunksize_mask)
++
++/* Return the smallest cacheline multiple that is >= s. */
++#define	CACHELINE_CEILING(s)						\
++	(((s) + (CACHELINE - 1)) & ~(CACHELINE - 1))
++
++/* Return the smallest quantum multiple that is >= a. */
++#define	QUANTUM_CEILING(a)						\
++	(((a) + quantum_mask) & ~quantum_mask)
++
++/* Return the smallest pagesize multiple that is >= s. */
++#define	PAGE_CEILING(s)							\
++	(((s) + pagesize_mask) & ~pagesize_mask)
++
++/* Compute the smallest power of 2 that is >= x. */
++static inline size_t
++pow2_ceil(size_t x)
++{
++
++	x--;
++	x |= x >> 1;
++	x |= x >> 2;
++	x |= x >> 4;
++	x |= x >> 8;
++	x |= x >> 16;
++#if (SIZEOF_PTR == 8)
++	x |= x >> 32;
++#endif
++	x++;
++	return (x);
++}
++
++#ifdef MALLOC_BALANCE
++/*
++ * Use a simple linear congruential pseudo-random number generator:
++ *
++ *   prn(y) = (a*x + c) % m
++ *
++ * where the following constants ensure maximal period:
++ *
++ *   a == Odd number (relatively prime to 2^n), and (a-1) is a multiple of 4.
++ *   c == Odd number (relatively prime to 2^n).
++ *   m == 2^32
++ *
++ * See Knuth's TAOCP 3rd Ed., Vol. 2, pg. 17 for details on these constraints.
++ *
++ * This choice of m has the disadvantage that the quality of the bits is
++ * proportional to bit position.  For example. the lowest bit has a cycle of 2,
++ * the next has a cycle of 4, etc.  For this reason, we prefer to use the upper
++ * bits.
++ */
++#  define PRN_DEFINE(suffix, var, a, c)					\
++static inline void							\
++sprn_##suffix(uint32_t seed)						\
++{									\
++	var = seed;							\
++}									\
++									\
++static inline uint32_t							\
++prn_##suffix(uint32_t lg_range)						\
++{									\
++	uint32_t ret, x;						\
++									\
++	assert(lg_range > 0);						\
++	assert(lg_range <= 32);						\
++									\
++	x = (var * (a)) + (c);						\
++	var = x;							\
++	ret = x >> (32 - lg_range);					\
++									\
++	return (ret);							\
++}
++#  define SPRN(suffix, seed)	sprn_##suffix(seed)
++#  define PRN(suffix, lg_range)	prn_##suffix(lg_range)
++#endif
++
++#ifdef MALLOC_BALANCE
++/* Define the PRNG used for arena assignment. */
++static __thread uint32_t balance_x;
++PRN_DEFINE(balance, balance_x, 1297, 1301)
++#endif
++
++static void
++wrtmessage(const char *p2, const char *p3, const char *p4)
++{
++
++	write(STDERR_FILENO, p2, strlen(p2));
++	write(STDERR_FILENO, p3, strlen(p3));
++	write(STDERR_FILENO, p4, strlen(p4));
++}
++
++void	(*_malloc_message)(const char *p2, const char *p3,
++	    const char *p4) = wrtmessage;
++
++#ifdef MALLOC_STATS
++/*
++ * Print to stderr in such a way as to (hopefully) avoid memory allocation.
++ */
++static void
++malloc_printf(const char *format, ...)
++{
++	char buf[4096];
++	va_list ap;
++
++	va_start(ap, format);
++	vsnprintf(buf, sizeof(buf), format, ap);
++	va_end(ap);
++	_malloc_message("", "", "");
++}
++#endif
++
++/*
++ * We don't want to depend on vsnprintf() for production builds, since that can
++ * cause unnecessary bloat for static binaries.  umax2s() provides minimal
++ * integer printing functionality, so that malloc_printf() use can be limited to
++ * MALLOC_STATS code.
++ */
++#define	UMAX2S_BUFSIZE	21
++static char *
++umax2s(uintmax_t x, char *s)
++{
++	unsigned i;
++
++	/* Make sure UMAX2S_BUFSIZE is large enough. */
++	assert(sizeof(uintmax_t) <= 8);
++
++	i = UMAX2S_BUFSIZE - 1;
++	s[i] = '\0';
++	do {
++		i--;
++		s[i] = "0123456789"[x % 10];
++		x /= 10;
++	} while (x > 0);
++
++	return (&s[i]);
++}
++
++/******************************************************************************/
++
++#ifdef MALLOC_DSS
++static bool
++base_pages_alloc_dss(size_t minsize)
++{
++
++	/*
++	 * Do special DSS allocation here, since base allocations don't need to
++	 * be chunk-aligned.
++	 */
++	if (dss_prev != (void *)-1) {
++		intptr_t incr;
++		size_t csize = CHUNK_CEILING(minsize);
++
++		do {
++			/* Get the current end of the DSS. */
++			dss_max = sbrk(0);
++
++			/*
++			 * Calculate how much padding is necessary to
++			 * chunk-align the end of the DSS.  Don't worry about
++			 * dss_max not being chunk-aligned though.
++			 */
++			incr = (intptr_t)chunksize
++			    - (intptr_t)CHUNK_ADDR2OFFSET(dss_max);
++			assert(incr >= 0);
++			if ((size_t)incr < minsize)
++				incr += csize;
++
++			dss_prev = sbrk(incr);
++			if (dss_prev == dss_max) {
++				/* Success. */
++				dss_max = (void *)((intptr_t)dss_prev + incr);
++				base_pages = dss_prev;
++				base_next_addr = base_pages;
++				base_past_addr = dss_max;
++#ifdef MALLOC_STATS
++				base_mapped += incr;
++#endif
++				return (false);
++			}
++		} while (dss_prev != (void *)-1);
++	}
++
++	return (true);
++}
++#endif
++
++static bool
++base_pages_alloc_mmap(size_t minsize)
++{
++	size_t csize;
++
++	assert(minsize != 0);
++	csize = PAGE_CEILING(minsize);
++	base_pages = pages_map(NULL, csize);
++	if (base_pages == NULL)
++		return (true);
++	base_next_addr = base_pages;
++	base_past_addr = (void *)((uintptr_t)base_pages + csize);
++#ifdef MALLOC_STATS
++	base_mapped += csize;
++#endif
++
++	return (false);
++}
++
++static bool
++base_pages_alloc(size_t minsize)
++{
++
++#ifdef MALLOC_DSS
++	if (opt_mmap && minsize != 0)
++#endif
++	{
++		if (base_pages_alloc_mmap(minsize) == false)
++			return (false);
++	}
++
++#ifdef MALLOC_DSS
++	if (opt_dss) {
++		if (base_pages_alloc_dss(minsize) == false)
++			return (false);
++	}
++
++#endif
++
++	return (true);
++}
++
++static void *
++base_alloc(size_t size)
++{
++	void *ret;
++	size_t csize;
++
++	/* Round size up to nearest multiple of the cacheline size. */
++	csize = CACHELINE_CEILING(size);
++
++	/* Make sure there's enough space for the allocation. */
++	if ((uintptr_t)base_next_addr + csize > (uintptr_t)base_past_addr) {
++		if (base_pages_alloc(csize)) {
++			return (NULL);
++		}
++	}
++	/* Allocate. */
++	ret = base_next_addr;
++	base_next_addr = (void *)((uintptr_t)base_next_addr + csize);
++
++	return (ret);
++}
++
++static void *
++base_calloc(size_t number, size_t size)
++{
++	void *ret;
++
++	ret = base_alloc(number * size);
++	memset(ret, 0, number * size);
++
++	return (ret);
++}
++
++static extent_node_t *
++base_node_alloc(void)
++{
++	extent_node_t *ret;
++
++	if (base_nodes != NULL) {
++		ret = base_nodes;
++		base_nodes = *(extent_node_t **)ret;
++	} else {
++		ret = (extent_node_t *)base_alloc(sizeof(extent_node_t));
++	}
++
++	return (ret);
++}
++
++static void
++base_node_dealloc(extent_node_t *node)
++{
++
++	*(extent_node_t **)node = base_nodes;
++	base_nodes = node;
++}
++
++/******************************************************************************/
++
++#ifdef MALLOC_STATS
++static void
++stats_print(arena_t *arena)
++{
++	unsigned i, gap_start;
++
++	malloc_printf("dirty: %zu page%s dirty, %llu sweep%s,"
++	    " %llu madvise%s, %llu page%s purged\n",
++	    arena->ndirty, arena->ndirty == 1 ? "" : "s",
++	    arena->stats.npurge, arena->stats.npurge == 1 ? "" : "s",
++	    arena->stats.nmadvise, arena->stats.nmadvise == 1 ? "" : "s",
++	    arena->stats.purged, arena->stats.purged == 1 ? "" : "s");
++
++	malloc_printf("            allocated      nmalloc      ndalloc\n");
++	malloc_printf("small:   %12zu %12llu %12llu\n",
++	    arena->stats.allocated_small, arena->stats.nmalloc_small,
++	    arena->stats.ndalloc_small);
++	malloc_printf("large:   %12zu %12llu %12llu\n",
++	    arena->stats.allocated_large, arena->stats.nmalloc_large,
++	    arena->stats.ndalloc_large);
++	malloc_printf("total:   %12zu %12llu %12llu\n",
++	    arena->stats.allocated_small + arena->stats.allocated_large,
++	    arena->stats.nmalloc_small + arena->stats.nmalloc_large,
++	    arena->stats.ndalloc_small + arena->stats.ndalloc_large);
++	malloc_printf("mapped:  %12zu\n", arena->stats.mapped);
++
++	malloc_printf("bins:     bin   size regs pgs  requests   newruns"
++	    "    reruns maxruns curruns\n");
++	for (i = 0, gap_start = UINT_MAX; i < ntbins + nqbins + nsbins; i++) {
++		if (arena->bins[i].stats.nrequests == 0) {
++			if (gap_start == UINT_MAX)
++				gap_start = i;
++		} else {
++			if (gap_start != UINT_MAX) {
++				if (i > gap_start + 1) {
++					/* Gap of more than one size class. */
++					malloc_printf("[%u..%u]\n",
++					    gap_start, i - 1);
++				} else {
++					/* Gap of one size class. */
++					malloc_printf("[%u]\n", gap_start);
++				}
++				gap_start = UINT_MAX;
++			}
++			malloc_printf(
++			    "%13u %1s %4u %4u %3u %9llu %9llu"
++			    " %9llu %7lu %7lu\n",
++			    i,
++			    i < ntbins ? "T" : i < ntbins + nqbins ? "Q" : "S",
++			    arena->bins[i].reg_size,
++			    arena->bins[i].nregs,
++			    arena->bins[i].run_size >> pagesize_2pow,
++			    arena->bins[i].stats.nrequests,
++			    arena->bins[i].stats.nruns,
++			    arena->bins[i].stats.reruns,
++			    arena->bins[i].stats.highruns,
++			    arena->bins[i].stats.curruns);
++		}
++	}
++	if (gap_start != UINT_MAX) {
++		if (i > gap_start + 1) {
++			/* Gap of more than one size class. */
++			malloc_printf("[%u..%u]\n", gap_start, i - 1);
++		} else {
++			/* Gap of one size class. */
++			malloc_printf("[%u]\n", gap_start);
++		}
++	}
++}
++#endif
++
++/*
++ * End Utility functions/macros.
++ */
++/******************************************************************************/
++/*
++ * Begin extent tree code.
++ */
++
++#ifdef MALLOC_DSS
++static inline int
++extent_szad_comp(extent_node_t *a, extent_node_t *b)
++{
++	int ret;
++	size_t a_size = a->size;
++	size_t b_size = b->size;
++
++	ret = (a_size > b_size) - (a_size < b_size);
++	if (ret == 0) {
++		uintptr_t a_addr = (uintptr_t)a->addr;
++		uintptr_t b_addr = (uintptr_t)b->addr;
++
++		ret = (a_addr > b_addr) - (a_addr < b_addr);
++	}
++
++	return (ret);
++}
++
++/* Wrap red-black tree macros in functions. */
++rb_wrap(static, extent_tree_szad_, extent_tree_t, extent_node_t,
++    link_szad, extent_szad_comp)
++#endif
++
++static inline int
++extent_ad_comp(extent_node_t *a, extent_node_t *b)
++{
++	uintptr_t a_addr = (uintptr_t)a->addr;
++	uintptr_t b_addr = (uintptr_t)b->addr;
++
++	return ((a_addr > b_addr) - (a_addr < b_addr));
++}
++
++/* Wrap red-black tree macros in functions. */
++rb_wrap(static, extent_tree_ad_, extent_tree_t, extent_node_t, link_ad,
++    extent_ad_comp)
++
++/*
++ * End extent tree code.
++ */
++/******************************************************************************/
++/*
++ * Begin chunk management functions.
++ */
++
++static void *
++pages_map(void *addr, size_t size)
++{
++	void *ret;
++
++	/*
++	 * We don't use MAP_FIXED here, because it can cause the *replacement*
++	 * of existing mappings, and we only want to create new mappings.
++	 */
++	ret = mmap(addr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON,
++	    -1, 0);
++	assert(ret != NULL);
++
++	if (ret == MAP_FAILED)
++		ret = NULL;
++	else if (addr != NULL && ret != addr) {
++		/*
++		 * We succeeded in mapping memory, but not in the right place.
++		 */
++		if (munmap(ret, size) == -1) {
++			char buf[STRERROR_BUF];
++
++			strerror_r(errno, buf, sizeof(buf));
++			_malloc_message(": (malloc) Error in munmap(): ", buf, "\n");
++			if (opt_abort)
++				abort();
++		}
++		ret = NULL;
++	}
++
++	assert(ret == NULL || (addr == NULL && ret != addr)
++	    || (addr != NULL && ret == addr));
++	return (ret);
++}
++
++static void
++pages_unmap(void *addr, size_t size)
++{
++
++	if (munmap(addr, size) == -1) {
++		char buf[STRERROR_BUF];
++
++		strerror_r(errno, buf, sizeof(buf));
++		_malloc_message("(malloc) Error in munmap(): ", buf, "\n");
++		if (opt_abort)
++			abort();
++	}
++}
++
++#ifdef MALLOC_DSS
++static void *
++chunk_alloc_dss(size_t size)
++{
++
++	/*
++	 * sbrk() uses a signed increment argument, so take care not to
++	 * interpret a huge allocation request as a negative increment.
++	 */
++	if ((intptr_t)size < 0)
++		return (NULL);
++
++	if (dss_prev != (void *)-1) {
++		intptr_t incr;
++
++		/*
++		 * The loop is necessary to recover from races with other
++		 * threads that are using the DSS for something other than
++		 * malloc.
++		 */
++		do {
++			void *ret;
++
++			/* Get the current end of the DSS. */
++			dss_max = sbrk(0);
++
++			/*
++			 * Calculate how much padding is necessary to
++			 * chunk-align the end of the DSS.
++			 */
++			incr = (intptr_t)size
++			    - (intptr_t)CHUNK_ADDR2OFFSET(dss_max);
++			if (incr == (intptr_t)size)
++				ret = dss_max;
++			else {
++				ret = (void *)((intptr_t)dss_max + incr);
++				incr += size;
++			}
++
++			dss_prev = sbrk(incr);
++			if (dss_prev == dss_max) {
++				/* Success. */
++				dss_max = (void *)((intptr_t)dss_prev + incr);
++				return (ret);
++			}
++		} while (dss_prev != (void *)-1);
++	}
++
++	return (NULL);
++}
++
++static void *
++chunk_recycle_dss(size_t size, bool zero)
++{
++	extent_node_t *node, key;
++
++	key.addr = NULL;
++	key.size = size;
++	node = extent_tree_szad_nsearch(&dss_chunks_szad, &key);
++	if (node != NULL) {
++		void *ret = node->addr;
++
++		/* Remove node from the tree. */
++		extent_tree_szad_remove(&dss_chunks_szad, node);
++		if (node->size == size) {
++			extent_tree_ad_remove(&dss_chunks_ad, node);
++			base_node_dealloc(node);
++		} else {
++			/*
++			 * Insert the remainder of node's address range as a
++			 * smaller chunk.  Its position within dss_chunks_ad
++			 * does not change.
++			 */
++			assert(node->size > size);
++			node->addr = (void *)((uintptr_t)node->addr + size);
++			node->size -= size;
++			extent_tree_szad_insert(&dss_chunks_szad, node);
++		}
++
++		if (zero)
++			memset(ret, 0, size);
++		return (ret);
++	}
++
++	return (NULL);
++}
++#endif
++
++static void *
++chunk_alloc_mmap(size_t size)
++{
++	void *ret;
++	size_t offset;
++
++	/*
++	 * Ideally, there would be a way to specify alignment to mmap() (like
++	 * NetBSD has), but in the absence of such a feature, we have to work
++	 * hard to efficiently create aligned mappings.  The reliable, but
++	 * expensive method is to create a mapping that is over-sized, then
++	 * trim the excess.  However, that always results in at least one call
++	 * to pages_unmap().
++	 *
++	 * A more optimistic approach is to try mapping precisely the right
++	 * amount, then try to append another mapping if alignment is off.  In
++	 * practice, this works out well as long as the application is not
++	 * interleaving mappings via direct mmap() calls.  If we do run into a
++	 * situation where there is an interleaved mapping and we are unable to
++	 * extend an unaligned mapping, our best option is to momentarily
++	 * revert to the reliable-but-expensive method.  This will tend to
++	 * leave a gap in the memory map that is too small to cause later
++	 * problems for the optimistic method.
++	 */
++
++	ret = pages_map(NULL, size);
++	if (ret == NULL)
++		return (NULL);
++
++	offset = CHUNK_ADDR2OFFSET(ret);
++	if (offset != 0) {
++		/* Try to extend chunk boundary. */
++		if (pages_map((void *)((uintptr_t)ret + size),
++		    chunksize - offset) == NULL) {
++			/*
++			 * Extension failed.  Clean up, then revert to the
++			 * reliable-but-expensive method.
++			 */
++			pages_unmap(ret, size);
++
++			/* Beware size_t wrap-around. */
++			if (size + chunksize <= size)
++				return NULL;
++
++			ret = pages_map(NULL, size + chunksize);
++			if (ret == NULL)
++				return (NULL);
++
++			/* Clean up unneeded leading/trailing space. */
++			offset = CHUNK_ADDR2OFFSET(ret);
++			if (offset != 0) {
++				/* Leading space. */
++				pages_unmap(ret, chunksize - offset);
++
++				ret = (void *)((uintptr_t)ret +
++				    (chunksize - offset));
++
++				/* Trailing space. */
++				pages_unmap((void *)((uintptr_t)ret + size),
++				    offset);
++			} else {
++				/* Trailing space only. */
++				pages_unmap((void *)((uintptr_t)ret + size),
++				    chunksize);
++			}
++		} else {
++			/* Clean up unneeded leading space. */
++			pages_unmap(ret, chunksize - offset);
++			ret = (void *)((uintptr_t)ret + (chunksize - offset));
++		}
++	}
++
++	return (ret);
++}
++
++static void *
++chunk_alloc(size_t size, bool zero)
++{
++	void *ret;
++
++	assert(size != 0);
++	assert((size & chunksize_mask) == 0);
++
++#ifdef MALLOC_DSS
++	if (opt_mmap)
++#endif
++	{
++		ret = chunk_alloc_mmap(size);
++		if (ret != NULL)
++			goto RETURN;
++	}
++
++#ifdef MALLOC_DSS
++	if (opt_dss) {
++		ret = chunk_recycle_dss(size, zero);
++		if (ret != NULL) {
++			goto RETURN;
++		}
++
++		ret = chunk_alloc_dss(size);
++		if (ret != NULL)
++			goto RETURN;
++	}
++#endif
++
++	/* All strategies for allocation failed. */
++	ret = NULL;
++RETURN:
++#ifdef MALLOC_STATS
++	if (ret != NULL) {
++		stats_chunks.nchunks += (size / chunksize);
++		stats_chunks.curchunks += (size / chunksize);
++	}
++	if (stats_chunks.curchunks > stats_chunks.highchunks)
++		stats_chunks.highchunks = stats_chunks.curchunks;
++#endif
++
++	assert(CHUNK_ADDR2BASE(ret) == ret);
++	return (ret);
++}
++
++#ifdef MALLOC_DSS
++static extent_node_t *
++chunk_dealloc_dss_record(void *chunk, size_t size)
++{
++	extent_node_t *node, *prev, key;
++
++	key.addr = (void *)((uintptr_t)chunk + size);
++	node = extent_tree_ad_nsearch(&dss_chunks_ad, &key);
++	/* Try to coalesce forward. */
++	if (node != NULL && node->addr == key.addr) {
++		/*
++		 * Coalesce chunk with the following address range.  This does
++		 * not change the position within dss_chunks_ad, so only
++		 * remove/insert from/into dss_chunks_szad.
++		 */
++		extent_tree_szad_remove(&dss_chunks_szad, node);
++		node->addr = chunk;
++		node->size += size;
++		extent_tree_szad_insert(&dss_chunks_szad, node);
++	} else {
++		/*
++		 * Coalescing forward failed, so insert a new node.  Drop
++		 * dss_mtx during node allocation, since it is possible that a
++		 * new base chunk will be allocated.
++		 */
++		node = base_node_alloc();
++		if (node == NULL)
++			return (NULL);
++		node->addr = chunk;
++		node->size = size;
++		extent_tree_ad_insert(&dss_chunks_ad, node);
++		extent_tree_szad_insert(&dss_chunks_szad, node);
++	}
++
++	/* Try to coalesce backward. */
++	prev = extent_tree_ad_prev(&dss_chunks_ad, node);
++	if (prev != NULL && (void *)((uintptr_t)prev->addr + prev->size) ==
++	    chunk) {
++		/*
++		 * Coalesce chunk with the previous address range.  This does
++		 * not change the position within dss_chunks_ad, so only
++		 * remove/insert node from/into dss_chunks_szad.
++		 */
++		extent_tree_szad_remove(&dss_chunks_szad, prev);
++		extent_tree_ad_remove(&dss_chunks_ad, prev);
++
++		extent_tree_szad_remove(&dss_chunks_szad, node);
++		node->addr = prev->addr;
++		node->size += prev->size;
++		extent_tree_szad_insert(&dss_chunks_szad, node);
++
++		base_node_dealloc(prev);
++	}
++
++	return (node);
++}
++
++static bool
++chunk_dealloc_dss(void *chunk, size_t size)
++{
++
++	if ((uintptr_t)chunk >= (uintptr_t)dss_base
++	    && (uintptr_t)chunk < (uintptr_t)dss_max) {
++		extent_node_t *node;
++
++		/* Try to coalesce with other unused chunks. */
++		node = chunk_dealloc_dss_record(chunk, size);
++		if (node != NULL) {
++			chunk = node->addr;
++			size = node->size;
++		}
++
++		/* Get the current end of the DSS. */
++		dss_max = sbrk(0);
++
++		/*
++		 * Try to shrink the DSS if this chunk is at the end of the
++		 * DSS.  The sbrk() call here is subject to a race condition
++		 * with threads that use brk(2) or sbrk(2) directly, but the
++		 * alternative would be to leak memory for the sake of poorly
++		 * designed multi-threaded programs.
++		 */
++		if ((void *)((uintptr_t)chunk + size) == dss_max
++		    && (dss_prev = sbrk(-(intptr_t)size)) == dss_max) {
++			/* Success. */
++			dss_max = (void *)((intptr_t)dss_prev - (intptr_t)size);
++
++			if (node != NULL) {
++				extent_tree_szad_remove(&dss_chunks_szad, node);
++				extent_tree_ad_remove(&dss_chunks_ad, node);
++				base_node_dealloc(node);
++			}
++		} else {
++			madvise(chunk, size, MADV_FREE);
++		}
++
++		return (false);
++	}
++
++	return (true);
++}
++#endif
++
++static void
++chunk_dealloc_mmap(void *chunk, size_t size)
++{
++
++	pages_unmap(chunk, size);
++}
++
++static void
++chunk_dealloc(void *chunk, size_t size)
++{
++
++	assert(chunk != NULL);
++	assert(CHUNK_ADDR2BASE(chunk) == chunk);
++	assert(size != 0);
++	assert((size & chunksize_mask) == 0);
++
++#ifdef MALLOC_STATS
++	stats_chunks.curchunks -= (size / chunksize);
++#endif
++
++#ifdef MALLOC_DSS
++	if (opt_dss) {
++		if (chunk_dealloc_dss(chunk, size) == false)
++			return;
++	}
++
++	if (opt_mmap)
++#endif
++		chunk_dealloc_mmap(chunk, size);
++}
++
++/*
++ * End chunk management functions.
++ */
++/******************************************************************************/
++/*
++ * Begin arena.
++ */
++
++/*
++ * Choose an arena based on a per-thread value (fast-path code, calls slow-path
++ * code if necessary).
++ */
++static inline arena_t *
++choose_arena(void)
++{
++	arena_t *ret;
++
++	/*
++	 * We can only use TLS if this is a PIC library, since for the static
++	 * library version, libc's malloc is used by TLS allocation, which
++	 * introduces a bootstrapping issue.
++	 */
++#ifndef NO_TLS
++	if (__isthreaded == false) {
++	    /* Avoid the overhead of TLS for single-threaded operation. */
++	    return (arenas[0]);
++	}
++
++	ret = arenas_map;
++	if (ret == NULL) {
++		ret = choose_arena_hard();
++		assert(ret != NULL);
++	}
++#else
++	ret = arenas[0];
++#endif
++
++	assert(ret != NULL);
++	return (ret);
++}
++
++#ifndef NO_TLS
++/*
++ * Choose an arena based on a per-thread value (slow-path code only, called
++ * only by choose_arena()).
++ */
++static arena_t *
++choose_arena_hard(void)
++{
++	arena_t *ret;
++
++	assert(__isthreaded);
++
++#ifdef MALLOC_BALANCE
++	/* Seed the PRNG used for arena load balancing. */
++	SPRN(balance, (uint32_t)(uintptr_t)(_pthread_self()));
++#endif
++
++	if (narenas > 1) {
++#ifdef MALLOC_BALANCE
++		unsigned ind;
++
++		ind = PRN(balance, narenas_2pow);
++		if ((ret = arenas[ind]) == NULL) {
++			if ((ret = arenas[ind]) == NULL)
++				ret = arenas_extend(ind);
++		}
++#else
++		if ((ret = arenas[next_arena]) == NULL)
++			ret = arenas_extend(next_arena);
++		next_arena = (next_arena + 1) % narenas;
++#endif
++	} else
++		ret = arenas[0];
++
++	arenas_map = ret;
++
++	return (ret);
++}
++#endif
++
++static inline int
++arena_chunk_comp(arena_chunk_t *a, arena_chunk_t *b)
++{
++	uintptr_t a_chunk = (uintptr_t)a;
++	uintptr_t b_chunk = (uintptr_t)b;
++
++	assert(a != NULL);
++	assert(b != NULL);
++
++	return ((a_chunk > b_chunk) - (a_chunk < b_chunk));
++}
++
++/* Wrap red-black tree macros in functions. */
++rb_wrap(static, arena_chunk_tree_dirty_, arena_chunk_tree_t,
++    arena_chunk_t, link_dirty, arena_chunk_comp)
++
++static inline int
++arena_run_comp(arena_chunk_map_t *a, arena_chunk_map_t *b)
++{
++	uintptr_t a_mapelm = (uintptr_t)a;
++	uintptr_t b_mapelm = (uintptr_t)b;
++
++	assert(a != NULL);
++	assert(b != NULL);
++
++	return ((a_mapelm > b_mapelm) - (a_mapelm < b_mapelm));
++}
++
++/* Wrap red-black tree macros in functions. */
++rb_wrap(static, arena_run_tree_, arena_run_tree_t, arena_chunk_map_t,
++    link, arena_run_comp)
++
++static inline int
++arena_avail_comp(arena_chunk_map_t *a, arena_chunk_map_t *b)
++{
++	int ret;
++	size_t a_size = a->bits & ~pagesize_mask;
++	size_t b_size = b->bits & ~pagesize_mask;
++
++	ret = (a_size > b_size) - (a_size < b_size);
++	if (ret == 0) {
++		uintptr_t a_mapelm, b_mapelm;
++
++		if ((a->bits & CHUNK_MAP_KEY) == 0)
++			a_mapelm = (uintptr_t)a;
++		else {
++			/*
++			 * Treat keys as though they are lower than anything
++			 * else.
++			 */
++			a_mapelm = 0;
++		}
++		b_mapelm = (uintptr_t)b;
++
++		ret = (a_mapelm > b_mapelm) - (a_mapelm < b_mapelm);
++	}
++
++	return (ret);
++}
++
++/* Wrap red-black tree macros in functions. */
++rb_wrap(static, arena_avail_tree_, arena_avail_tree_t,
++    arena_chunk_map_t, link, arena_avail_comp)
++
++static inline void *
++arena_run_reg_alloc(arena_run_t *run, arena_bin_t *bin)
++{
++	void *ret;
++	unsigned i, mask, bit, regind;
++
++	assert(run->magic == ARENA_RUN_MAGIC);
++	assert(run->regs_minelm < bin->regs_mask_nelms);
++
++	/*
++	 * Move the first check outside the loop, so that run->regs_minelm can
++	 * be updated unconditionally, without the possibility of updating it
++	 * multiple times.
++	 */
++	i = run->regs_minelm;
++	mask = run->regs_mask[i];
++	if (mask != 0) {
++		/* Usable allocation found. */
++		bit = ffs((int)mask) - 1;
++
++		regind = ((i << (SIZEOF_INT_2POW + 3)) + bit);
++		assert(regind < bin->nregs);
++		ret = (void *)(((uintptr_t)run) + bin->reg0_offset
++		    + (bin->reg_size * regind));
++
++		/* Clear bit. */
++		mask ^= (1U << bit);
++		run->regs_mask[i] = mask;
++
++		return (ret);
++	}
++
++	for (i++; i < bin->regs_mask_nelms; i++) {
++		mask = run->regs_mask[i];
++		if (mask != 0) {
++			/* Usable allocation found. */
++			bit = ffs((int)mask) - 1;
++
++			regind = ((i << (SIZEOF_INT_2POW + 3)) + bit);
++			assert(regind < bin->nregs);
++			ret = (void *)(((uintptr_t)run) + bin->reg0_offset
++			    + (bin->reg_size * regind));
++
++			/* Clear bit. */
++			mask ^= (1U << bit);
++			run->regs_mask[i] = mask;
++
++			/*
++			 * Make a note that nothing before this element
++			 * contains a free region.
++			 */
++			run->regs_minelm = i; /* Low payoff: + (mask == 0); */
++
++			return (ret);
++		}
++	}
++	/* Not reached. */
++	assert(0);
++	return (NULL);
++}
++
++static inline void
++arena_run_reg_dalloc(arena_run_t *run, arena_bin_t *bin, void *ptr, size_t size)
++{
++	/*
++	 * To divide by a number D that is not a power of two we multiply
++	 * by (2^21 / D) and then right shift by 21 positions.
++	 *
++	 *   X / D
++	 *
++	 * becomes
++	 *
++	 *   (X * size_invs[(D >> QUANTUM_2POW_MIN) - 3]) >> SIZE_INV_SHIFT
++	 */
++#define	SIZE_INV_SHIFT 21
++#define	SIZE_INV(s) (((1U << SIZE_INV_SHIFT) / (s << QUANTUM_2POW_MIN)) + 1)
++	static const unsigned size_invs[] = {
++	    SIZE_INV(3),
++	    SIZE_INV(4), SIZE_INV(5), SIZE_INV(6), SIZE_INV(7),
++	    SIZE_INV(8), SIZE_INV(9), SIZE_INV(10), SIZE_INV(11),
++	    SIZE_INV(12),SIZE_INV(13), SIZE_INV(14), SIZE_INV(15),
++	    SIZE_INV(16),SIZE_INV(17), SIZE_INV(18), SIZE_INV(19),
++	    SIZE_INV(20),SIZE_INV(21), SIZE_INV(22), SIZE_INV(23),
++	    SIZE_INV(24),SIZE_INV(25), SIZE_INV(26), SIZE_INV(27),
++	    SIZE_INV(28),SIZE_INV(29), SIZE_INV(30), SIZE_INV(31)
++#if (QUANTUM_2POW_MIN < 4)
++	    ,
++	    SIZE_INV(32), SIZE_INV(33), SIZE_INV(34), SIZE_INV(35),
++	    SIZE_INV(36), SIZE_INV(37), SIZE_INV(38), SIZE_INV(39),
++	    SIZE_INV(40), SIZE_INV(41), SIZE_INV(42), SIZE_INV(43),
++	    SIZE_INV(44), SIZE_INV(45), SIZE_INV(46), SIZE_INV(47),
++	    SIZE_INV(48), SIZE_INV(49), SIZE_INV(50), SIZE_INV(51),
++	    SIZE_INV(52), SIZE_INV(53), SIZE_INV(54), SIZE_INV(55),
++	    SIZE_INV(56), SIZE_INV(57), SIZE_INV(58), SIZE_INV(59),
++	    SIZE_INV(60), SIZE_INV(61), SIZE_INV(62), SIZE_INV(63)
++#endif
++	};
++	unsigned diff, regind, elm, bit;
++
++	assert(run->magic == ARENA_RUN_MAGIC);
++	assert(((sizeof(size_invs)) / sizeof(unsigned)) + 3
++	    >= (SMALL_MAX_DEFAULT >> QUANTUM_2POW_MIN));
++
++	/*
++	 * Avoid doing division with a variable divisor if possible.  Using
++	 * actual division here can reduce allocator throughput by over 20%!
++	 */
++	diff = (unsigned)((uintptr_t)ptr - (uintptr_t)run - bin->reg0_offset);
++	if ((size & (size - 1)) == 0) {
++		/*
++		 * log2_table allows fast division of a power of two in the
++		 * [1..128] range.
++		 *
++		 * (x / divisor) becomes (x >> log2_table[divisor - 1]).
++		 */
++		static const unsigned char log2_table[] = {
++		    0, 1, 0, 2, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4,
++		    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5,
++		    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
++		    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6,
++		    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
++		    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
++		    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
++		    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7
++		};
++
++		if (size <= 128)
++			regind = (diff >> log2_table[size - 1]);
++		else if (size <= 32768)
++			regind = diff >> (8 + log2_table[(size >> 8) - 1]);
++		else {
++			/*
++			 * The run size is too large for us to use the lookup
++			 * table.  Use real division.
++			 */
++			regind = diff / size;
++		}
++	} else if (size <= (((sizeof(size_invs) / sizeof(unsigned)) + 2)
++	    << QUANTUM_2POW_MIN)) {
++		regind = size_invs[(size >> QUANTUM_2POW_MIN) - 3] * diff;
++		regind >>= SIZE_INV_SHIFT;
++	} else {
++		/*
++		 * size_invs isn't large enough to handle this size class, so
++		 * calculate regind using actual division.  This only happens
++		 * if the user increases small_max via the 'S' runtime
++		 * configuration option.
++		 */
++		regind = diff / size;
++	};
++	assert(diff == regind * size);
++	assert(regind < bin->nregs);
++
++	elm = regind >> (SIZEOF_INT_2POW + 3);
++	if (elm < run->regs_minelm)
++		run->regs_minelm = elm;
++	bit = regind - (elm << (SIZEOF_INT_2POW + 3));
++	assert((run->regs_mask[elm] & (1U << bit)) == 0);
++	run->regs_mask[elm] |= (1U << bit);
++#undef SIZE_INV
++#undef SIZE_INV_SHIFT
++}
++
++static void
++arena_run_split(arena_t *arena, arena_run_t *run, size_t size, bool large,
++    bool zero)
++{
++	arena_chunk_t *chunk;
++	size_t old_ndirty, run_ind, total_pages, need_pages, rem_pages, i;
++
++	chunk = (arena_chunk_t *)CHUNK_ADDR2BASE(run);
++	old_ndirty = chunk->ndirty;
++	run_ind = (unsigned)(((uintptr_t)run - (uintptr_t)chunk)
++	    >> pagesize_2pow);
++	total_pages = (chunk->map[run_ind].bits & ~pagesize_mask) >>
++	    pagesize_2pow;
++	need_pages = (size >> pagesize_2pow);
++	assert(need_pages > 0);
++	assert(need_pages <= total_pages);
++	rem_pages = total_pages - need_pages;
++
++	arena_avail_tree_remove(&arena->runs_avail, &chunk->map[run_ind]);
++
++	/* Keep track of trailing unused pages for later use. */
++	if (rem_pages > 0) {
++		chunk->map[run_ind+need_pages].bits = (rem_pages <<
++		    pagesize_2pow) | (chunk->map[run_ind+need_pages].bits &
++		    pagesize_mask);
++		chunk->map[run_ind+total_pages-1].bits = (rem_pages <<
++		    pagesize_2pow) | (chunk->map[run_ind+total_pages-1].bits &
++		    pagesize_mask);
++		arena_avail_tree_insert(&arena->runs_avail,
++		    &chunk->map[run_ind+need_pages]);
++	}
++
++	for (i = 0; i < need_pages; i++) {
++		/* Zero if necessary. */
++		if (zero) {
++			if ((chunk->map[run_ind + i].bits & CHUNK_MAP_ZEROED)
++			    == 0) {
++				memset((void *)((uintptr_t)chunk + ((run_ind
++				    + i) << pagesize_2pow)), 0, pagesize);
++				/* CHUNK_MAP_ZEROED is cleared below. */
++			}
++		}
++
++		/* Update dirty page accounting. */
++		if (chunk->map[run_ind + i].bits & CHUNK_MAP_DIRTY) {
++			chunk->ndirty--;
++			arena->ndirty--;
++			/* CHUNK_MAP_DIRTY is cleared below. */
++		}
++
++		/* Initialize the chunk map. */
++		if (large) {
++			chunk->map[run_ind + i].bits = CHUNK_MAP_LARGE
++			    | CHUNK_MAP_ALLOCATED;
++		} else {
++			chunk->map[run_ind + i].bits = (size_t)run
++			    | CHUNK_MAP_ALLOCATED;
++		}
++	}
++
++	/*
++	 * Set the run size only in the first element for large runs.  This is
++	 * primarily a debugging aid, since the lack of size info for trailing
++	 * pages only matters if the application tries to operate on an
++	 * interior pointer.
++	 */
++	if (large)
++		chunk->map[run_ind].bits |= size;
++
++	if (chunk->ndirty == 0 && old_ndirty > 0)
++		arena_chunk_tree_dirty_remove(&arena->chunks_dirty, chunk);
++}
++
++static arena_chunk_t *
++arena_chunk_alloc(arena_t *arena)
++{
++	arena_chunk_t *chunk;
++	size_t i;
++
++	if (arena->spare != NULL) {
++		chunk = arena->spare;
++		arena->spare = NULL;
++	} else {
++		chunk = (arena_chunk_t *)chunk_alloc(chunksize, true);
++		if (chunk == NULL)
++			return (NULL);
++#ifdef MALLOC_STATS
++		arena->stats.mapped += chunksize;
++#endif
++
++		chunk->arena = arena;
++
++		/*
++		 * Claim that no pages are in use, since the header is merely
++		 * overhead.
++		 */
++		chunk->ndirty = 0;
++
++		/*
++		 * Initialize the map to contain one maximal free untouched run.
++		 */
++		for (i = 0; i < arena_chunk_header_npages; i++)
++			chunk->map[i].bits = 0;
++		chunk->map[i].bits = arena_maxclass | CHUNK_MAP_ZEROED;
++		for (i++; i < chunk_npages-1; i++) {
++			chunk->map[i].bits = CHUNK_MAP_ZEROED;
++		}
++		chunk->map[chunk_npages-1].bits = arena_maxclass |
++		    CHUNK_MAP_ZEROED;
++	}
++
++	/* Insert the run into the runs_avail tree. */
++	arena_avail_tree_insert(&arena->runs_avail,
++	    &chunk->map[arena_chunk_header_npages]);
++
++	return (chunk);
++}
++
++static void
++arena_chunk_dealloc(arena_t *arena, arena_chunk_t *chunk)
++{
++
++	if (arena->spare != NULL) {
++		if (arena->spare->ndirty > 0) {
++			arena_chunk_tree_dirty_remove(
++			    &chunk->arena->chunks_dirty, arena->spare);
++			arena->ndirty -= arena->spare->ndirty;
++		}
++		chunk_dealloc((void *)arena->spare, chunksize);
++#ifdef MALLOC_STATS
++		arena->stats.mapped -= chunksize;
++#endif
++	}
++
++	/*
++	 * Remove run from runs_avail, regardless of whether this chunk
++	 * will be cached, so that the arena does not use it.  Dirty page
++	 * flushing only uses the chunks_dirty tree, so leaving this chunk in
++	 * the chunks_* trees is sufficient for that purpose.
++	 */
++	arena_avail_tree_remove(&arena->runs_avail,
++	    &chunk->map[arena_chunk_header_npages]);
++
++	arena->spare = chunk;
++}
++
++static arena_run_t *
++arena_run_alloc(arena_t *arena, size_t size, bool large, bool zero)
++{
++	arena_chunk_t *chunk;
++	arena_run_t *run;
++	arena_chunk_map_t *mapelm, key;
++
++	assert(size <= arena_maxclass);
++	assert((size & pagesize_mask) == 0);
++
++	/* Search the arena's chunks for the lowest best fit. */
++	key.bits = size | CHUNK_MAP_KEY;
++	mapelm = arena_avail_tree_nsearch(&arena->runs_avail, &key);
++	if (mapelm != NULL) {
++		arena_chunk_t *run_chunk = CHUNK_ADDR2BASE(mapelm);
++		size_t pageind = ((uintptr_t)mapelm - (uintptr_t)run_chunk->map)
++		    / sizeof(arena_chunk_map_t);
++
++		run = (arena_run_t *)((uintptr_t)run_chunk + (pageind
++		    << pagesize_2pow));
++		arena_run_split(arena, run, size, large, zero);
++		return (run);
++	}
++
++	/*
++	 * No usable runs.  Create a new chunk from which to allocate the run.
++	 */
++	chunk = arena_chunk_alloc(arena);
++	if (chunk == NULL)
++		return (NULL);
++	run = (arena_run_t *)((uintptr_t)chunk + (arena_chunk_header_npages <<
++	    pagesize_2pow));
++	/* Update page map. */
++	arena_run_split(arena, run, size, large, zero);
++	return (run);
++}
++
++static void
++arena_purge(arena_t *arena)
++{
++	arena_chunk_t *chunk;
++	size_t i, npages;
++#ifdef MALLOC_DEBUG
++	size_t ndirty = 0;
++
++	rb_foreach_begin(arena_chunk_t, link_dirty, &arena->chunks_dirty,
++	    chunk) {
++		ndirty += chunk->ndirty;
++	} rb_foreach_end(arena_chunk_t, link_dirty, &arena->chunks_dirty, chunk)
++	assert(ndirty == arena->ndirty);
++#endif
++	assert(arena->ndirty > opt_dirty_max);
++
++#ifdef MALLOC_STATS
++	arena->stats.npurge++;
++#endif
++
++	/*
++	 * Iterate downward through chunks until enough dirty memory has been
++	 * purged.  Terminate as soon as possible in order to minimize the
++	 * number of system calls, even if a chunk has only been partially
++	 * purged.
++	 */
++	while (arena->ndirty > (opt_dirty_max >> 1)) {
++		chunk = arena_chunk_tree_dirty_last(&arena->chunks_dirty);
++		assert(chunk != NULL);
++
++		for (i = chunk_npages - 1; chunk->ndirty > 0; i--) {
++			assert(i >= arena_chunk_header_npages);
++
++			if (chunk->map[i].bits & CHUNK_MAP_DIRTY) {
++				chunk->map[i].bits ^= CHUNK_MAP_DIRTY;
++				/* Find adjacent dirty run(s). */
++				for (npages = 1; i > arena_chunk_header_npages
++				    && (chunk->map[i - 1].bits &
++				    CHUNK_MAP_DIRTY); npages++) {
++					i--;
++					chunk->map[i].bits ^= CHUNK_MAP_DIRTY;
++				}
++				chunk->ndirty -= npages;
++				arena->ndirty -= npages;
++
++				madvise((void *)((uintptr_t)chunk + (i <<
++				    pagesize_2pow)), (npages << pagesize_2pow),
++				    MADV_FREE);
++#ifdef MALLOC_STATS
++				arena->stats.nmadvise++;
++				arena->stats.purged += npages;
++#endif
++				if (arena->ndirty <= (opt_dirty_max >> 1))
++					break;
++			}
++		}
++
++		if (chunk->ndirty == 0) {
++			arena_chunk_tree_dirty_remove(&arena->chunks_dirty,
++			    chunk);
++		}
++	}
++}
++
++static void
++arena_run_dalloc(arena_t *arena, arena_run_t *run, bool dirty)
++{
++	arena_chunk_t *chunk;
++	size_t size, run_ind, run_pages;
++
++	chunk = (arena_chunk_t *)CHUNK_ADDR2BASE(run);
++	run_ind = (size_t)(((uintptr_t)run - (uintptr_t)chunk)
++	    >> pagesize_2pow);
++	assert(run_ind >= arena_chunk_header_npages);
++	assert(run_ind < chunk_npages);
++	if ((chunk->map[run_ind].bits & CHUNK_MAP_LARGE) != 0)
++		size = chunk->map[run_ind].bits & ~pagesize_mask;
++	else
++		size = run->bin->run_size;
++	run_pages = (size >> pagesize_2pow);
++
++	/* Mark pages as unallocated in the chunk map. */
++	if (dirty) {
++		size_t i;
++
++		for (i = 0; i < run_pages; i++) {
++			assert((chunk->map[run_ind + i].bits & CHUNK_MAP_DIRTY)
++			    == 0);
++			chunk->map[run_ind + i].bits = CHUNK_MAP_DIRTY;
++		}
++
++		if (chunk->ndirty == 0) {
++			arena_chunk_tree_dirty_insert(&arena->chunks_dirty,
++			    chunk);
++		}
++		chunk->ndirty += run_pages;
++		arena->ndirty += run_pages;
++	} else {
++		size_t i;
++
++		for (i = 0; i < run_pages; i++) {
++			chunk->map[run_ind + i].bits &= ~(CHUNK_MAP_LARGE |
++			    CHUNK_MAP_ALLOCATED);
++		}
++	}
++	chunk->map[run_ind].bits = size | (chunk->map[run_ind].bits &
++	    pagesize_mask);
++	chunk->map[run_ind+run_pages-1].bits = size |
++	    (chunk->map[run_ind+run_pages-1].bits & pagesize_mask);
++
++	/* Try to coalesce forward. */
++	if (run_ind + run_pages < chunk_npages &&
++	    (chunk->map[run_ind+run_pages].bits & CHUNK_MAP_ALLOCATED) == 0) {
++		size_t nrun_size = chunk->map[run_ind+run_pages].bits &
++		    ~pagesize_mask;
++
++		/*
++		 * Remove successor from runs_avail; the coalesced run is
++		 * inserted later.
++		 */
++		arena_avail_tree_remove(&arena->runs_avail,
++		    &chunk->map[run_ind+run_pages]);
++
++		size += nrun_size;
++		run_pages = size >> pagesize_2pow;
++
++		assert((chunk->map[run_ind+run_pages-1].bits & ~pagesize_mask)
++		    == nrun_size);
++		chunk->map[run_ind].bits = size | (chunk->map[run_ind].bits &
++		    pagesize_mask);
++		chunk->map[run_ind+run_pages-1].bits = size |
++		    (chunk->map[run_ind+run_pages-1].bits & pagesize_mask);
++	}
++
++	/* Try to coalesce backward. */
++	if (run_ind > arena_chunk_header_npages && (chunk->map[run_ind-1].bits &
++	    CHUNK_MAP_ALLOCATED) == 0) {
++		size_t prun_size = chunk->map[run_ind-1].bits & ~pagesize_mask;
++
++		run_ind -= prun_size >> pagesize_2pow;
++
++		/*
++		 * Remove predecessor from runs_avail; the coalesced run is
++		 * inserted later.
++		 */
++		arena_avail_tree_remove(&arena->runs_avail,
++		    &chunk->map[run_ind]);
++
++		size += prun_size;
++		run_pages = size >> pagesize_2pow;
++
++		assert((chunk->map[run_ind].bits & ~pagesize_mask) ==
++		    prun_size);
++		chunk->map[run_ind].bits = size | (chunk->map[run_ind].bits &
++		    pagesize_mask);
++		chunk->map[run_ind+run_pages-1].bits = size |
++		    (chunk->map[run_ind+run_pages-1].bits & pagesize_mask);
++	}
++
++	/* Insert into runs_avail, now that coalescing is complete. */
++	arena_avail_tree_insert(&arena->runs_avail, &chunk->map[run_ind]);
++
++	/* Deallocate chunk if it is now completely unused. */
++	if ((chunk->map[arena_chunk_header_npages].bits & (~pagesize_mask |
++	    CHUNK_MAP_ALLOCATED)) == arena_maxclass)
++		arena_chunk_dealloc(arena, chunk);
++
++	/* Enforce opt_dirty_max. */
++	if (arena->ndirty > opt_dirty_max)
++		arena_purge(arena);
++}
++
++static void
++arena_run_trim_head(arena_t *arena, arena_chunk_t *chunk, arena_run_t *run,
++    size_t oldsize, size_t newsize)
++{
++	size_t pageind = ((uintptr_t)run - (uintptr_t)chunk) >> pagesize_2pow;
++	size_t head_npages = (oldsize - newsize) >> pagesize_2pow;
++
++	assert(oldsize > newsize);
++
++	/*
++	 * Update the chunk map so that arena_run_dalloc() can treat the
++	 * leading run as separately allocated.
++	 */
++	chunk->map[pageind].bits = (oldsize - newsize) | CHUNK_MAP_LARGE |
++	    CHUNK_MAP_ALLOCATED;
++	chunk->map[pageind+head_npages].bits = newsize | CHUNK_MAP_LARGE |
++	    CHUNK_MAP_ALLOCATED;
++
++	arena_run_dalloc(arena, run, false);
++}
++
++static void
++arena_run_trim_tail(arena_t *arena, arena_chunk_t *chunk, arena_run_t *run,
++    size_t oldsize, size_t newsize, bool dirty)
++{
++	size_t pageind = ((uintptr_t)run - (uintptr_t)chunk) >> pagesize_2pow;
++	size_t npages = newsize >> pagesize_2pow;
++
++	assert(oldsize > newsize);
++
++	/*
++	 * Update the chunk map so that arena_run_dalloc() can treat the
++	 * trailing run as separately allocated.
++	 */
++	chunk->map[pageind].bits = newsize | CHUNK_MAP_LARGE |
++	    CHUNK_MAP_ALLOCATED;
++	chunk->map[pageind+npages].bits = (oldsize - newsize) | CHUNK_MAP_LARGE
++	    | CHUNK_MAP_ALLOCATED;
++
++	arena_run_dalloc(arena, (arena_run_t *)((uintptr_t)run + newsize),
++	    dirty);
++}
++
++static arena_run_t *
++arena_bin_nonfull_run_get(arena_t *arena, arena_bin_t *bin)
++{
++	arena_chunk_map_t *mapelm;
++	arena_run_t *run;
++	unsigned i, remainder;
++
++	/* Look for a usable run. */
++	mapelm = arena_run_tree_first(&bin->runs);
++	if (mapelm != NULL) {
++		/* run is guaranteed to have available space. */
++		arena_run_tree_remove(&bin->runs, mapelm);
++		run = (arena_run_t *)(mapelm->bits & ~pagesize_mask);
++#ifdef MALLOC_STATS
++		bin->stats.reruns++;
++#endif
++		return (run);
++	}
++	/* No existing runs have any space available. */
++
++	/* Allocate a new run. */
++	run = arena_run_alloc(arena, bin->run_size, false, false);
++	if (run == NULL)
++		return (NULL);
++
++	/* Initialize run internals. */
++	run->bin = bin;
++
++	for (i = 0; i < bin->regs_mask_nelms - 1; i++)
++		run->regs_mask[i] = UINT_MAX;
++	remainder = bin->nregs & ((1U << (SIZEOF_INT_2POW + 3)) - 1);
++	if (remainder == 0)
++		run->regs_mask[i] = UINT_MAX;
++	else {
++		/* The last element has spare bits that need to be unset. */
++		run->regs_mask[i] = (UINT_MAX >> ((1U << (SIZEOF_INT_2POW + 3))
++		    - remainder));
++	}
++
++	run->regs_minelm = 0;
++
++	run->nfree = bin->nregs;
++#ifdef MALLOC_DEBUG
++	run->magic = ARENA_RUN_MAGIC;
++#endif
++
++#ifdef MALLOC_STATS
++	bin->stats.nruns++;
++	bin->stats.curruns++;
++	if (bin->stats.curruns > bin->stats.highruns)
++		bin->stats.highruns = bin->stats.curruns;
++#endif
++	return (run);
++}
++
++/* bin->runcur must have space available before this function is called. */
++static inline void *
++arena_bin_malloc_easy(arena_t *arena, arena_bin_t *bin, arena_run_t *run)
++{
++	void *ret;
++
++	assert(run->magic == ARENA_RUN_MAGIC);
++	assert(run->nfree > 0);
++
++	ret = arena_run_reg_alloc(run, bin);
++	assert(ret != NULL);
++	run->nfree--;
++
++	return (ret);
++}
++
++/* Re-fill bin->runcur, then call arena_bin_malloc_easy(). */
++static void *
++arena_bin_malloc_hard(arena_t *arena, arena_bin_t *bin)
++{
++
++	bin->runcur = arena_bin_nonfull_run_get(arena, bin);
++	if (bin->runcur == NULL)
++		return (NULL);
++	assert(bin->runcur->magic == ARENA_RUN_MAGIC);
++	assert(bin->runcur->nfree > 0);
++
++	return (arena_bin_malloc_easy(arena, bin, bin->runcur));
++}
++
++/*
++ * Calculate bin->run_size such that it meets the following constraints:
++ *
++ *   *) bin->run_size >= min_run_size
++ *   *) bin->run_size <= arena_maxclass
++ *   *) bin->run_size <= RUN_MAX_SMALL
++ *   *) run header overhead <= RUN_MAX_OVRHD (or header overhead relaxed).
++ *
++ * bin->nregs, bin->regs_mask_nelms, and bin->reg0_offset are
++ * also calculated here, since these settings are all interdependent.
++ */
++static size_t
++arena_bin_run_size_calc(arena_bin_t *bin, size_t min_run_size)
++{
++	size_t try_run_size, good_run_size;
++	unsigned good_nregs, good_mask_nelms, good_reg0_offset;
++	unsigned try_nregs, try_mask_nelms, try_reg0_offset;
++
++	assert(min_run_size >= pagesize);
++	assert(min_run_size <= arena_maxclass);
++	assert(min_run_size <= RUN_MAX_SMALL);
++
++	/*
++	 * Calculate known-valid settings before entering the run_size
++	 * expansion loop, so that the first part of the loop always copies
++	 * valid settings.
++	 *
++	 * The do..while loop iteratively reduces the number of regions until
++	 * the run header and the regions no longer overlap.  A closed formula
++	 * would be quite messy, since there is an interdependency between the
++	 * header's mask length and the number of regions.
++	 */
++	try_run_size = min_run_size;
++	try_nregs = ((try_run_size - sizeof(arena_run_t)) / bin->reg_size)
++	    + 1; /* Counter-act try_nregs-- in loop. */
++	do {
++		try_nregs--;
++		try_mask_nelms = (try_nregs >> (SIZEOF_INT_2POW + 3)) +
++		    ((try_nregs & ((1U << (SIZEOF_INT_2POW + 3)) - 1)) ? 1 : 0);
++		try_reg0_offset = try_run_size - (try_nregs * bin->reg_size);
++	} while (sizeof(arena_run_t) + (sizeof(unsigned) * (try_mask_nelms - 1))
++	    > try_reg0_offset);
++
++	/* run_size expansion loop. */
++	do {
++		/*
++		 * Copy valid settings before trying more aggressive settings.
++		 */
++		good_run_size = try_run_size;
++		good_nregs = try_nregs;
++		good_mask_nelms = try_mask_nelms;
++		good_reg0_offset = try_reg0_offset;
++
++		/* Try more aggressive settings. */
++		try_run_size += pagesize;
++		try_nregs = ((try_run_size - sizeof(arena_run_t)) /
++		    bin->reg_size) + 1; /* Counter-act try_nregs-- in loop. */
++		do {
++			try_nregs--;
++			try_mask_nelms = (try_nregs >> (SIZEOF_INT_2POW + 3)) +
++			    ((try_nregs & ((1U << (SIZEOF_INT_2POW + 3)) - 1)) ?
++			    1 : 0);
++			try_reg0_offset = try_run_size - (try_nregs *
++			    bin->reg_size);
++		} while (sizeof(arena_run_t) + (sizeof(unsigned) *
++		    (try_mask_nelms - 1)) > try_reg0_offset);
++	} while (try_run_size <= arena_maxclass && try_run_size <= RUN_MAX_SMALL
++	    && RUN_MAX_OVRHD * (bin->reg_size << 3) > RUN_MAX_OVRHD_RELAX
++	    && (try_reg0_offset << RUN_BFP) > RUN_MAX_OVRHD * try_run_size);
++
++	assert(sizeof(arena_run_t) + (sizeof(unsigned) * (good_mask_nelms - 1))
++	    <= good_reg0_offset);
++	assert((good_mask_nelms << (SIZEOF_INT_2POW + 3)) >= good_nregs);
++
++	/* Copy final settings. */
++	bin->run_size = good_run_size;
++	bin->nregs = good_nregs;
++	bin->regs_mask_nelms = good_mask_nelms;
++	bin->reg0_offset = good_reg0_offset;
++
++	return (good_run_size);
++}
++
++#ifdef MALLOC_BALANCE
++static inline void
++arena_lock_balance(arena_t *arena)
++{
++	unsigned contention;
++
++	if (narenas > 1) {
++		/*
++		 * Calculate the exponentially averaged contention for this
++		 * arena.  Due to integer math always rounding down, this value
++		 * decays somewhat faster then normal.
++		 */
++		arena->contention = (((uint64_t)arena->contention
++		    * (uint64_t)((1U << BALANCE_ALPHA_INV_2POW)-1))
++		    + (uint64_t)contention) >> BALANCE_ALPHA_INV_2POW;
++		if (arena->contention >= opt_balance_threshold)
++			arena_lock_balance_hard(arena);
++	}
++}
++
++static void
++arena_lock_balance_hard(arena_t *arena)
++{
++	uint32_t ind;
++
++	arena->contention = 0;
++#ifdef MALLOC_STATS
++	arena->stats.nbalance++;
++#endif
++	ind = PRN(balance, narenas_2pow);
++	if (arenas[ind] != NULL)
++		arenas_map = arenas[ind];
++	else {
++		if (arenas[ind] != NULL)
++			arenas_map = arenas[ind];
++		else
++			arenas_map = arenas_extend(ind);
++	}
++}
++#endif
++
++static inline void *
++arena_malloc_small(arena_t *arena, size_t size, bool zero)
++{
++	void *ret;
++	arena_bin_t *bin;
++	arena_run_t *run;
++
++	if (size < small_min) {
++		/* Tiny. */
++		size = pow2_ceil(size);
++		bin = &arena->bins[ffs((int)(size >> (TINY_MIN_2POW +
++		    1)))];
++#if (!defined(NDEBUG) || defined(MALLOC_STATS))
++		/*
++		 * Bin calculation is always correct, but we may need
++		 * to fix size for the purposes of assertions and/or
++		 * stats accuracy.
++		 */
++		if (size < (1U << TINY_MIN_2POW))
++			size = (1U << TINY_MIN_2POW);
++#endif
++	} else if (size <= small_max) {
++		/* Quantum-spaced. */
++		size = QUANTUM_CEILING(size);
++		bin = &arena->bins[ntbins + (size >> opt_quantum_2pow)
++		    - 1];
++	} else {
++		/* Sub-page. */
++		size = pow2_ceil(size);
++		bin = &arena->bins[ntbins + nqbins
++		    + (ffs((int)(size >> opt_small_max_2pow)) - 2)];
++	}
++	assert(size == bin->reg_size);
++
++#ifdef MALLOC_BALANCE
++	arena_lock_balance(arena);
++#endif
++	if ((run = bin->runcur) != NULL && run->nfree > 0)
++		ret = arena_bin_malloc_easy(arena, bin, run);
++	else
++		ret = arena_bin_malloc_hard(arena, bin);
++
++	if (ret == NULL) {
++		return (NULL);
++	}
++
++#ifdef MALLOC_STATS
++	bin->stats.nrequests++;
++	arena->stats.nmalloc_small++;
++	arena->stats.allocated_small += size;
++#endif
++
++	if (zero == false) {
++		if (opt_junk)
++			memset(ret, 0xa5, size);
++		else if (opt_zero)
++			memset(ret, 0, size);
++	} else
++		memset(ret, 0, size);
++
++	return (ret);
++}
++
++static void *
++arena_malloc_large(arena_t *arena, size_t size, bool zero)
++{
++	void *ret;
++
++	/* Large allocation. */
++	size = PAGE_CEILING(size);
++#ifdef MALLOC_BALANCE
++	arena_lock_balance(arena);
++#endif
++	ret = (void *)arena_run_alloc(arena, size, true, zero);
++	if (ret == NULL) {
++		return (NULL);
++	}
++#ifdef MALLOC_STATS
++	arena->stats.nmalloc_large++;
++	arena->stats.allocated_large += size;
++#endif
++
++	if (zero == false) {
++		if (opt_junk)
++			memset(ret, 0xa5, size);
++		else if (opt_zero)
++			memset(ret, 0, size);
++	}
++
++	return (ret);
++}
++
++static inline void *
++arena_malloc(arena_t *arena, size_t size, bool zero)
++{
++
++	assert(arena != NULL);
++	assert(arena->magic == ARENA_MAGIC);
++	assert(size != 0);
++	assert(QUANTUM_CEILING(size) <= arena_maxclass);
++
++	if (size <= bin_maxclass) {
++		return (arena_malloc_small(arena, size, zero));
++	} else
++		return (arena_malloc_large(arena, size, zero));
++}
++
++static inline void *
++imalloc(size_t size)
++{
++
++	assert(size != 0);
++
++	if (size <= arena_maxclass)
++		return (arena_malloc(choose_arena(), size, false));
++	else
++		return (huge_malloc(size, false));
++}
++
++static inline void *
++icalloc(size_t size)
++{
++
++	if (size <= arena_maxclass)
++		return (arena_malloc(choose_arena(), size, true));
++	else
++		return (huge_malloc(size, true));
++}
++
++/* Only handles large allocations that require more than page alignment. */
++static void *
++arena_palloc(arena_t *arena, size_t alignment, size_t size, size_t alloc_size)
++{
++	void *ret;
++	size_t offset;
++	arena_chunk_t *chunk;
++
++	assert((size & pagesize_mask) == 0);
++	assert((alignment & pagesize_mask) == 0);
++
++#ifdef MALLOC_BALANCE
++	arena_lock_balance(arena);
++#endif
++	ret = (void *)arena_run_alloc(arena, alloc_size, true, false);
++	if (ret == NULL) {
++		return (NULL);
++	}
++
++	chunk = (arena_chunk_t *)CHUNK_ADDR2BASE(ret);
++
++	offset = (uintptr_t)ret & (alignment - 1);
++	assert((offset & pagesize_mask) == 0);
++	assert(offset < alloc_size);
++	if (offset == 0)
++		arena_run_trim_tail(arena, chunk, ret, alloc_size, size, false);
++	else {
++		size_t leadsize, trailsize;
++
++		leadsize = alignment - offset;
++		if (leadsize > 0) {
++			arena_run_trim_head(arena, chunk, ret, alloc_size,
++			    alloc_size - leadsize);
++			ret = (void *)((uintptr_t)ret + leadsize);
++		}
++
++		trailsize = alloc_size - leadsize - size;
++		if (trailsize != 0) {
++			/* Trim trailing space. */
++			assert(trailsize < alloc_size);
++			arena_run_trim_tail(arena, chunk, ret, size + trailsize,
++			    size, false);
++		}
++	}
++
++#ifdef MALLOC_STATS
++	arena->stats.nmalloc_large++;
++	arena->stats.allocated_large += size;
++#endif
++
++	if (opt_junk)
++		memset(ret, 0xa5, size);
++	else if (opt_zero)
++		memset(ret, 0, size);
++	return (ret);
++}
++
++static inline void *
++ipalloc(size_t alignment, size_t size)
++{
++	void *ret;
++	size_t ceil_size;
++
++	/*
++	 * Round size up to the nearest multiple of alignment.
++	 *
++	 * This done, we can take advantage of the fact that for each small
++	 * size class, every object is aligned at the smallest power of two
++	 * that is non-zero in the base two representation of the size.  For
++	 * example:
++	 *
++	 *   Size |   Base 2 | Minimum alignment
++	 *   -----+----------+------------------
++	 *     96 |  1100000 |  32
++	 *    144 | 10100000 |  32
++	 *    192 | 11000000 |  64
++	 *
++	 * Depending on runtime settings, it is possible that arena_malloc()
++	 * will further round up to a power of two, but that never causes
++	 * correctness issues.
++	 */
++	ceil_size = (size + (alignment - 1)) & (-alignment);
++	/*
++	 * (ceil_size < size) protects against the combination of maximal
++	 * alignment and size greater than maximal alignment.
++	 */
++	if (ceil_size < size) {
++		/* size_t overflow. */
++		return (NULL);
++	}
++
++	if (ceil_size <= pagesize || (alignment <= pagesize
++	    && ceil_size <= arena_maxclass))
++		ret = arena_malloc(choose_arena(), ceil_size, false);
++	else {
++		size_t run_size;
++
++		/*
++		 * We can't achieve sub-page alignment, so round up alignment
++		 * permanently; it makes later calculations simpler.
++		 */
++		alignment = PAGE_CEILING(alignment);
++		ceil_size = PAGE_CEILING(size);
++		/*
++		 * (ceil_size < size) protects against very large sizes within
++		 * pagesize of SIZE_T_MAX.
++		 *
++		 * (ceil_size + alignment < ceil_size) protects against the
++		 * combination of maximal alignment and ceil_size large enough
++		 * to cause overflow.  This is similar to the first overflow
++		 * check above, but it needs to be repeated due to the new
++		 * ceil_size value, which may now be *equal* to maximal
++		 * alignment, whereas before we only detected overflow if the
++		 * original size was *greater* than maximal alignment.
++		 */
++		if (ceil_size < size || ceil_size + alignment < ceil_size) {
++			/* size_t overflow. */
++			return (NULL);
++		}
++
++		/*
++		 * Calculate the size of the over-size run that arena_palloc()
++		 * would need to allocate in order to guarantee the alignment.
++		 */
++		if (ceil_size >= alignment)
++			run_size = ceil_size + alignment - pagesize;
++		else {
++			/*
++			 * It is possible that (alignment << 1) will cause
++			 * overflow, but it doesn't matter because we also
++			 * subtract pagesize, which in the case of overflow
++			 * leaves us with a very large run_size.  That causes
++			 * the first conditional below to fail, which means
++			 * that the bogus run_size value never gets used for
++			 * anything important.
++			 */
++			run_size = (alignment << 1) - pagesize;
++		}
++
++		if (run_size <= arena_maxclass) {
++			ret = arena_palloc(choose_arena(), alignment, ceil_size,
++			    run_size);
++		} else if (alignment <= chunksize)
++			ret = huge_malloc(ceil_size, false);
++		else
++			ret = huge_palloc(alignment, ceil_size);
++	}
++
++	assert(((uintptr_t)ret & (alignment - 1)) == 0);
++	return (ret);
++}
++
++/* Return the size of the allocation pointed to by ptr. */
++static size_t
++arena_salloc(const void *ptr)
++{
++	size_t ret;
++	arena_chunk_t *chunk;
++	size_t pageind, mapbits;
++
++	assert(ptr != NULL);
++	assert(CHUNK_ADDR2BASE(ptr) != ptr);
++
++	chunk = (arena_chunk_t *)CHUNK_ADDR2BASE(ptr);
++	pageind = (((uintptr_t)ptr - (uintptr_t)chunk) >> pagesize_2pow);
++	mapbits = chunk->map[pageind].bits;
++	assert((mapbits & CHUNK_MAP_ALLOCATED) != 0);
++	if ((mapbits & CHUNK_MAP_LARGE) == 0) {
++		arena_run_t *run = (arena_run_t *)(mapbits & ~pagesize_mask);
++		assert(run->magic == ARENA_RUN_MAGIC);
++		ret = run->bin->reg_size;
++	} else {
++		ret = mapbits & ~pagesize_mask;
++		assert(ret != 0);
++	}
++
++	return (ret);
++}
++
++static inline size_t
++isalloc(const void *ptr)
++{
++	size_t ret;
++	arena_chunk_t *chunk;
++
++	assert(ptr != NULL);
++
++	chunk = (arena_chunk_t *)CHUNK_ADDR2BASE(ptr);
++	if (chunk != ptr) {
++		/* Region. */
++		assert(chunk->arena->magic == ARENA_MAGIC);
++
++		ret = arena_salloc(ptr);
++	} else {
++		extent_node_t *node, key;
++
++		/* Chunk (huge allocation). */
++
++
++		/* Extract from tree of huge allocations. */
++		key.addr = __DECONST(void *, ptr);
++		node = extent_tree_ad_search(&huge, &key);
++		assert(node != NULL);
++
++		ret = node->size;
++
++	}
++
++	return (ret);
++}
++
++static inline void
++arena_dalloc_small(arena_t *arena, arena_chunk_t *chunk, void *ptr,
++    arena_chunk_map_t *mapelm)
++{
++	arena_run_t *run;
++	arena_bin_t *bin;
++	size_t size;
++
++	run = (arena_run_t *)(mapelm->bits & ~pagesize_mask);
++	assert(run->magic == ARENA_RUN_MAGIC);
++	bin = run->bin;
++	size = bin->reg_size;
++
++	if (opt_junk)
++		memset(ptr, 0x5a, size);
++
++	arena_run_reg_dalloc(run, bin, ptr, size);
++	run->nfree++;
++
++	if (run->nfree == bin->nregs) {
++		/* Deallocate run. */
++		if (run == bin->runcur)
++			bin->runcur = NULL;
++		else if (bin->nregs != 1) {
++			size_t run_pageind = (((uintptr_t)run -
++			    (uintptr_t)chunk)) >> pagesize_2pow;
++			arena_chunk_map_t *run_mapelm =
++			    &chunk->map[run_pageind];
++			/*
++			 * This block's conditional is necessary because if the
++			 * run only contains one region, then it never gets
++			 * inserted into the non-full runs tree.
++			 */
++			arena_run_tree_remove(&bin->runs, run_mapelm);
++		}
++#ifdef MALLOC_DEBUG
++		run->magic = 0;
++#endif
++		arena_run_dalloc(arena, run, true);
++#ifdef MALLOC_STATS
++		bin->stats.curruns--;
++#endif
++	} else if (run->nfree == 1 && run != bin->runcur) {
++		/*
++		 * Make sure that bin->runcur always refers to the lowest
++		 * non-full run, if one exists.
++		 */
++		if (bin->runcur == NULL)
++			bin->runcur = run;
++		else if ((uintptr_t)run < (uintptr_t)bin->runcur) {
++			/* Switch runcur. */
++			if (bin->runcur->nfree > 0) {
++				arena_chunk_t *runcur_chunk =
++				    CHUNK_ADDR2BASE(bin->runcur);
++				size_t runcur_pageind =
++				    (((uintptr_t)bin->runcur -
++				    (uintptr_t)runcur_chunk)) >> pagesize_2pow;
++				arena_chunk_map_t *runcur_mapelm =
++				    &runcur_chunk->map[runcur_pageind];
++
++				/* Insert runcur. */
++				arena_run_tree_insert(&bin->runs,
++				    runcur_mapelm);
++			}
++			bin->runcur = run;
++		} else {
++			size_t run_pageind = (((uintptr_t)run -
++			    (uintptr_t)chunk)) >> pagesize_2pow;
++			arena_chunk_map_t *run_mapelm =
++			    &chunk->map[run_pageind];
++
++			assert(arena_run_tree_search(&bin->runs, run_mapelm) ==
++			    NULL);
++			arena_run_tree_insert(&bin->runs, run_mapelm);
++		}
++	}
++#ifdef MALLOC_STATS
++	arena->stats.allocated_small -= size;
++	arena->stats.ndalloc_small++;
++#endif
++}
++
++static void
++arena_dalloc_large(arena_t *arena, arena_chunk_t *chunk, void *ptr)
++{
++	/* Large allocation. */
++
++#ifndef MALLOC_STATS
++	if (opt_junk)
++#endif
++	{
++		size_t pageind = ((uintptr_t)ptr - (uintptr_t)chunk) >>
++		    pagesize_2pow;
++		size_t size = chunk->map[pageind].bits & ~pagesize_mask;
++
++#ifdef MALLOC_STATS
++		if (opt_junk)
++#endif
++			memset(ptr, 0x5a, size);
++#ifdef MALLOC_STATS
++		arena->stats.allocated_large -= size;
++#endif
++	}
++#ifdef MALLOC_STATS
++	arena->stats.ndalloc_large++;
++#endif
++
++	arena_run_dalloc(arena, (arena_run_t *)ptr, true);
++}
++
++static inline void
++arena_dalloc(arena_t *arena, arena_chunk_t *chunk, void *ptr)
++{
++	size_t pageind;
++	arena_chunk_map_t *mapelm;
++
++	assert(arena != NULL);
++	assert(arena->magic == ARENA_MAGIC);
++	assert(chunk->arena == arena);
++	assert(ptr != NULL);
++	assert(CHUNK_ADDR2BASE(ptr) != ptr);
++
++	pageind = (((uintptr_t)ptr - (uintptr_t)chunk) >> pagesize_2pow);
++	mapelm = &chunk->map[pageind];
++	assert((mapelm->bits & CHUNK_MAP_ALLOCATED) != 0);
++	if ((mapelm->bits & CHUNK_MAP_LARGE) == 0) {
++		/* Small allocation. */
++		arena_dalloc_small(arena, chunk, ptr, mapelm);
++	} else
++		arena_dalloc_large(arena, chunk, ptr);
++}
++
++static inline void
++idalloc(void *ptr)
++{
++	arena_chunk_t *chunk;
++
++	assert(ptr != NULL);
++
++	chunk = (arena_chunk_t *)CHUNK_ADDR2BASE(ptr);
++	if (chunk != ptr)
++		arena_dalloc(chunk->arena, chunk, ptr);
++	else
++		huge_dalloc(ptr);
++}
++
++static void
++arena_ralloc_large_shrink(arena_t *arena, arena_chunk_t *chunk, void *ptr,
++    size_t size, size_t oldsize)
++{
++
++	assert(size < oldsize);
++
++	/*
++	 * Shrink the run, and make trailing pages available for other
++	 * allocations.
++	 */
++#ifdef MALLOC_BALANCE
++	arena_lock_balance(arena);
++#endif
++	arena_run_trim_tail(arena, chunk, (arena_run_t *)ptr, oldsize, size,
++	    true);
++#ifdef MALLOC_STATS
++	arena->stats.allocated_large -= oldsize - size;
++#endif
++}
++
++static bool
++arena_ralloc_large_grow(arena_t *arena, arena_chunk_t *chunk, void *ptr,
++    size_t size, size_t oldsize)
++{
++	size_t pageind = ((uintptr_t)ptr - (uintptr_t)chunk) >> pagesize_2pow;
++	size_t npages = oldsize >> pagesize_2pow;
++
++	assert(oldsize == (chunk->map[pageind].bits & ~pagesize_mask));
++
++	/* Try to extend the run. */
++	assert(size > oldsize);
++#ifdef MALLOC_BALANCE
++	arena_lock_balance(arena);
++#endif
++	if (pageind + npages < chunk_npages && (chunk->map[pageind+npages].bits
++	    & CHUNK_MAP_ALLOCATED) == 0 && (chunk->map[pageind+npages].bits &
++	    ~pagesize_mask) >= size - oldsize) {
++		/*
++		 * The next run is available and sufficiently large.  Split the
++		 * following run, then merge the first part with the existing
++		 * allocation.
++		 */
++		arena_run_split(arena, (arena_run_t *)((uintptr_t)chunk +
++		    ((pageind+npages) << pagesize_2pow)), size - oldsize, true,
++		    false);
++
++		chunk->map[pageind].bits = size | CHUNK_MAP_LARGE |
++		    CHUNK_MAP_ALLOCATED;
++		chunk->map[pageind+npages].bits = CHUNK_MAP_LARGE |
++		    CHUNK_MAP_ALLOCATED;
++
++#ifdef MALLOC_STATS
++		arena->stats.allocated_large += size - oldsize;
++#endif
++		return (false);
++	}
++
++	return (true);
++}
++
++/*
++ * Try to resize a large allocation, in order to avoid copying.  This will
++ * always fail if growing an object, and the following run is already in use.
++ */
++static bool
++arena_ralloc_large(void *ptr, size_t size, size_t oldsize)
++{
++	size_t psize;
++
++	psize = PAGE_CEILING(size);
++	if (psize == oldsize) {
++		/* Same size class. */
++		if (opt_junk && size < oldsize) {
++			memset((void *)((uintptr_t)ptr + size), 0x5a, oldsize -
++			    size);
++		}
++		return (false);
++	} else {
++		arena_chunk_t *chunk;
++		arena_t *arena;
++
++		chunk = (arena_chunk_t *)CHUNK_ADDR2BASE(ptr);
++		arena = chunk->arena;
++		assert(arena->magic == ARENA_MAGIC);
++
++		if (psize < oldsize) {
++			/* Fill before shrinking in order avoid a race. */
++			if (opt_junk) {
++				memset((void *)((uintptr_t)ptr + size), 0x5a,
++				    oldsize - size);
++			}
++			arena_ralloc_large_shrink(arena, chunk, ptr, psize,
++			    oldsize);
++			return (false);
++		} else {
++			bool ret = arena_ralloc_large_grow(arena, chunk, ptr,
++			    psize, oldsize);
++			if (ret == false && opt_zero) {
++				memset((void *)((uintptr_t)ptr + oldsize), 0,
++				    size - oldsize);
++			}
++			return (ret);
++		}
++	}
++}
++
++static void *
++arena_ralloc(void *ptr, size_t size, size_t oldsize)
++{
++	void *ret;
++	size_t copysize;
++
++	/* Try to avoid moving the allocation. */
++	if (size < small_min) {
++		if (oldsize < small_min &&
++		    ffs((int)(pow2_ceil(size) >> (TINY_MIN_2POW + 1)))
++		    == ffs((int)(pow2_ceil(oldsize) >> (TINY_MIN_2POW + 1))))
++			goto IN_PLACE; /* Same size class. */
++	} else if (size <= small_max) {
++		if (oldsize >= small_min && oldsize <= small_max &&
++		    (QUANTUM_CEILING(size) >> opt_quantum_2pow)
++		    == (QUANTUM_CEILING(oldsize) >> opt_quantum_2pow))
++			goto IN_PLACE; /* Same size class. */
++	} else if (size <= bin_maxclass) {
++		if (oldsize > small_max && oldsize <= bin_maxclass &&
++		    pow2_ceil(size) == pow2_ceil(oldsize))
++			goto IN_PLACE; /* Same size class. */
++	} else if (oldsize > bin_maxclass && oldsize <= arena_maxclass) {
++		assert(size > bin_maxclass);
++		if (arena_ralloc_large(ptr, size, oldsize) == false)
++			return (ptr);
++	}
++
++	/*
++	 * If we get here, then size and oldsize are different enough that we
++	 * need to move the object.  In that case, fall back to allocating new
++	 * space and copying.
++	 */
++	ret = arena_malloc(choose_arena(), size, false);
++	if (ret == NULL)
++		return (NULL);
++
++	/* Junk/zero-filling were already done by arena_malloc(). */
++	copysize = (size < oldsize) ? size : oldsize;
++	memcpy(ret, ptr, copysize);
++	idalloc(ptr);
++	return (ret);
++IN_PLACE:
++	if (opt_junk && size < oldsize)
++		memset((void *)((uintptr_t)ptr + size), 0x5a, oldsize - size);
++	else if (opt_zero && size > oldsize)
++		memset((void *)((uintptr_t)ptr + oldsize), 0, size - oldsize);
++	return (ptr);
++}
++
++static inline void *
++iralloc(void *ptr, size_t size)
++{
++	size_t oldsize;
++
++	assert(ptr != NULL);
++	assert(size != 0);
++
++	oldsize = isalloc(ptr);
++
++	if (size <= arena_maxclass)
++		return (arena_ralloc(ptr, size, oldsize));
++	else
++		return (huge_ralloc(ptr, size, oldsize));
++}
++
++static bool
++arena_new(arena_t *arena)
++{
++	unsigned i;
++	arena_bin_t *bin;
++	size_t prev_run_size;
++
++#ifdef MALLOC_STATS
++	memset(&arena->stats, 0, sizeof(arena_stats_t));
++#endif
++
++	/* Initialize chunks. */
++	arena_chunk_tree_dirty_new(&arena->chunks_dirty);
++	arena->spare = NULL;
++
++	arena->ndirty = 0;
++
++	arena_avail_tree_new(&arena->runs_avail);
++
++#ifdef MALLOC_BALANCE
++	arena->contention = 0;
++#endif
++
++	/* Initialize bins. */
++	prev_run_size = pagesize;
++
++	/* (2^n)-spaced tiny bins. */
++	for (i = 0; i < ntbins; i++) {
++		bin = &arena->bins[i];
++		bin->runcur = NULL;
++		arena_run_tree_new(&bin->runs);
++
++		bin->reg_size = (1U << (TINY_MIN_2POW + i));
++
++		prev_run_size = arena_bin_run_size_calc(bin, prev_run_size);
++
++#ifdef MALLOC_STATS
++		memset(&bin->stats, 0, sizeof(malloc_bin_stats_t));
++#endif
++	}
++
++	/* Quantum-spaced bins. */
++	for (; i < ntbins + nqbins; i++) {
++		bin = &arena->bins[i];
++		bin->runcur = NULL;
++		arena_run_tree_new(&bin->runs);
++
++		bin->reg_size = quantum * (i - ntbins + 1);
++
++		prev_run_size = arena_bin_run_size_calc(bin, prev_run_size);
++
++#ifdef MALLOC_STATS
++		memset(&bin->stats, 0, sizeof(malloc_bin_stats_t));
++#endif
++	}
++
++	/* (2^n)-spaced sub-page bins. */
++	for (; i < ntbins + nqbins + nsbins; i++) {
++		bin = &arena->bins[i];
++		bin->runcur = NULL;
++		arena_run_tree_new(&bin->runs);
++
++		bin->reg_size = (small_max << (i - (ntbins + nqbins) + 1));
++
++		prev_run_size = arena_bin_run_size_calc(bin, prev_run_size);
++
++#ifdef MALLOC_STATS
++		memset(&bin->stats, 0, sizeof(malloc_bin_stats_t));
++#endif
++	}
++
++#ifdef MALLOC_DEBUG
++	arena->magic = ARENA_MAGIC;
++#endif
++
++	return (false);
++}
++
++/* Create a new arena and insert it into the arenas array at index ind. */
++static arena_t *
++arenas_extend(unsigned ind)
++{
++	arena_t *ret;
++
++	/* Allocate enough space for trailing bins. */
++	ret = (arena_t *)base_alloc(sizeof(arena_t)
++	    + (sizeof(arena_bin_t) * (ntbins + nqbins + nsbins - 1)));
++	if (ret != NULL && arena_new(ret) == false) {
++		arenas[ind] = ret;
++		return (ret);
++	}
++	/* Only reached if there is an OOM error. */
++
++	/*
++	 * OOM here is quite inconvenient to propagate, since dealing with it
++	 * would require a check for failure in the fast path.  Instead, punt
++	 * by using arenas[0].  In practice, this is an extremely unlikely
++	 * failure.
++	 */
++	_malloc_message("(malloc) Error initializing arena\n", "", "");
++	if (opt_abort)
++		abort();
++
++	return (arenas[0]);
++}
++
++/*
++ * End arena.
++ */
++/******************************************************************************/
++/*
++ * Begin general internal functions.
++ */
++
++static void *
++huge_malloc(size_t size, bool zero)
++{
++	void *ret;
++	size_t csize;
++	extent_node_t *node;
++
++	/* Allocate one or more contiguous chunks for this request. */
++
++	csize = CHUNK_CEILING(size);
++	if (csize == 0) {
++		/* size is large enough to cause size_t wrap-around. */
++		return (NULL);
++	}
++
++	/* Allocate an extent node with which to track the chunk. */
++	node = base_node_alloc();
++	if (node == NULL)
++		return (NULL);
++
++	ret = chunk_alloc(csize, zero);
++	if (ret == NULL) {
++		base_node_dealloc(node);
++		return (NULL);
++	}
++
++	/* Insert node into huge. */
++	node->addr = ret;
++	node->size = csize;
++
++	extent_tree_ad_insert(&huge, node);
++#ifdef MALLOC_STATS
++	huge_nmalloc++;
++	huge_allocated += csize;
++#endif
++
++	if (zero == false) {
++		if (opt_junk)
++			memset(ret, 0xa5, csize);
++		else if (opt_zero)
++			memset(ret, 0, csize);
++	}
++
++	return (ret);
++}
++
++/* Only handles large allocations that require more than chunk alignment. */
++static void *
++huge_palloc(size_t alignment, size_t size)
++{
++	void *ret;
++	size_t alloc_size, chunk_size, offset;
++	extent_node_t *node;
++
++	/*
++	 * This allocation requires alignment that is even larger than chunk
++	 * alignment.  This means that huge_malloc() isn't good enough.
++	 *
++	 * Allocate almost twice as many chunks as are demanded by the size or
++	 * alignment, in order to assure the alignment can be achieved, then
++	 * unmap leading and trailing chunks.
++	 */
++	assert(alignment >= chunksize);
++
++	chunk_size = CHUNK_CEILING(size);
++
++	if (size >= alignment)
++		alloc_size = chunk_size + alignment - chunksize;
++	else
++		alloc_size = (alignment << 1) - chunksize;
++
++	/* Allocate an extent node with which to track the chunk. */
++	node = base_node_alloc();
++	if (node == NULL)
++		return (NULL);
++
++	ret = chunk_alloc(alloc_size, false);
++	if (ret == NULL) {
++		base_node_dealloc(node);
++		return (NULL);
++	}
++
++	offset = (uintptr_t)ret & (alignment - 1);
++	assert((offset & chunksize_mask) == 0);
++	assert(offset < alloc_size);
++	if (offset == 0) {
++		/* Trim trailing space. */
++		chunk_dealloc((void *)((uintptr_t)ret + chunk_size), alloc_size
++		    - chunk_size);
++	} else {
++		size_t trailsize;
++
++		/* Trim leading space. */
++		chunk_dealloc(ret, alignment - offset);
++
++		ret = (void *)((uintptr_t)ret + (alignment - offset));
++
++		trailsize = alloc_size - (alignment - offset) - chunk_size;
++		if (trailsize != 0) {
++		    /* Trim trailing space. */
++		    assert(trailsize < alloc_size);
++		    chunk_dealloc((void *)((uintptr_t)ret + chunk_size),
++			trailsize);
++		}
++	}
++
++	/* Insert node into huge. */
++	node->addr = ret;
++	node->size = chunk_size;
++
++	extent_tree_ad_insert(&huge, node);
++#ifdef MALLOC_STATS
++	huge_nmalloc++;
++	huge_allocated += chunk_size;
++#endif
++
++	if (opt_junk)
++		memset(ret, 0xa5, chunk_size);
++	else if (opt_zero)
++		memset(ret, 0, chunk_size);
++
++	return (ret);
++}
++
++static void *
++huge_ralloc(void *ptr, size_t size, size_t oldsize)
++{
++	void *ret;
++	size_t copysize;
++
++	/* Avoid moving the allocation if the size class would not change. */
++	if (oldsize > arena_maxclass &&
++	    CHUNK_CEILING(size) == CHUNK_CEILING(oldsize)) {
++		if (opt_junk && size < oldsize) {
++			memset((void *)((uintptr_t)ptr + size), 0x5a, oldsize
++			    - size);
++		} else if (opt_zero && size > oldsize) {
++			memset((void *)((uintptr_t)ptr + oldsize), 0, size
++			    - oldsize);
++		}
++		return (ptr);
++	}
++
++	/*
++	 * If we get here, then size and oldsize are different enough that we
++	 * need to use a different size class.  In that case, fall back to
++	 * allocating new space and copying.
++	 */
++	ret = huge_malloc(size, false);
++	if (ret == NULL)
++		return (NULL);
++
++	copysize = (size < oldsize) ? size : oldsize;
++	memcpy(ret, ptr, copysize);
++	idalloc(ptr);
++	return (ret);
++}
++
++static void
++huge_dalloc(void *ptr)
++{
++	extent_node_t *node, key;
++
++
++	/* Extract from tree of huge allocations. */
++	key.addr = ptr;
++	node = extent_tree_ad_search(&huge, &key);
++	assert(node != NULL);
++	assert(node->addr == ptr);
++	extent_tree_ad_remove(&huge, node);
++
++#ifdef MALLOC_STATS
++	huge_ndalloc++;
++	huge_allocated -= node->size;
++#endif
++
++
++	/* Unmap chunk. */
++#ifdef MALLOC_DSS
++	if (opt_dss && opt_junk)
++		memset(node->addr, 0x5a, node->size);
++#endif
++	chunk_dealloc(node->addr, node->size);
++
++	base_node_dealloc(node);
++}
++
++static void
++malloc_print_stats(void)
++{
++
++	if (opt_print_stats) {
++		char s[UMAX2S_BUFSIZE];
++		_malloc_message("___ Begin malloc statistics ___\n", "", "");
++		_malloc_message("Assertions ",
++#ifdef NDEBUG
++		    "disabled",
++#else
++		    "enabled",
++#endif
++		    "\n");
++		_malloc_message("Boolean MALLOC_OPTIONS: ",
++		    opt_abort ? "A" : "a", "");
++#ifdef MALLOC_DSS
++		_malloc_message(opt_dss ? "D" : "d", "", "");
++#endif
++		_malloc_message(opt_junk ? "J" : "j", "", "");
++#ifdef MALLOC_DSS
++		_malloc_message(opt_mmap ? "M" : "m", "", "");
++#endif
++		_malloc_message(opt_utrace ? "PU" : "Pu",
++				opt_sysv ? "V" : "v",
++				opt_xmalloc ? "X" : "x");
++		_malloc_message(opt_zero ? "Z\n" : "z\n", "", "");
++
++		_malloc_message("CPUs: ", umax2s(ncpus, s), "\n");
++		_malloc_message("Max arenas: ", umax2s(narenas, s), "\n");
++#ifdef MALLOC_BALANCE
++		_malloc_message("Arena balance threshold: ",
++		    umax2s(opt_balance_threshold, s), "\n", "");
++#endif
++		_malloc_message("Pointer size: ", umax2s(sizeof(void *), s),
++		    "\n");
++		_malloc_message("Quantum size: ", umax2s(quantum, s), "\n");
++		_malloc_message("Max small size: ", umax2s(small_max, s), "\n");
++		_malloc_message("Max dirty pages per arena: ",
++		    umax2s(opt_dirty_max, s), "\n");
++
++		_malloc_message("Chunk size: ", umax2s(chunksize, s), "");
++		_malloc_message(" (2^", umax2s(opt_chunk_2pow, s), ")\n");
++
++#ifdef MALLOC_STATS
++		{
++			size_t allocated, mapped;
++#ifdef MALLOC_BALANCE
++			uint64_t nbalance = 0;
++#endif
++			unsigned i;
++			arena_t *arena;
++
++			/* Calculate and print allocated/mapped stats. */
++
++			/* arenas. */
++			for (i = 0, allocated = 0; i < narenas; i++) {
++				if (arenas[i] != NULL) {
++					allocated +=
++					    arenas[i]->stats.allocated_small;
++					allocated +=
++					    arenas[i]->stats.allocated_large;
++#ifdef MALLOC_BALANCE
++					nbalance += arenas[i]->stats.nbalance;
++#endif
++				}
++			}
++
++			/* huge/base. */
++			allocated += huge_allocated;
++			mapped = stats_chunks.curchunks * chunksize;
++
++			mapped += base_mapped;
++
++			malloc_printf("Allocated: %zu, mapped: %zu\n",
++			    allocated, mapped);
++
++#ifdef MALLOC_BALANCE
++			malloc_printf("Arena balance reassignments: %llu\n",
++			    nbalance);
++#endif
++
++			/* Print chunk stats. */
++			{
++				chunk_stats_t chunks_stats;
++
++				chunks_stats = stats_chunks;
++
++				malloc_printf("chunks: nchunks   "
++				    "highchunks    curchunks\n");
++				malloc_printf("  %13llu%13lu%13lu\n",
++				    chunks_stats.nchunks,
++				    chunks_stats.highchunks,
++				    chunks_stats.curchunks);
++			}
++
++			/* Print chunk stats. */
++			malloc_printf(
++			    "huge: nmalloc      ndalloc    allocated\n");
++			malloc_printf(" %12llu %12llu %12zu\n",
++			    huge_nmalloc, huge_ndalloc, huge_allocated);
++
++			/* Print stats for each arena. */
++			for (i = 0; i < narenas; i++) {
++				arena = arenas[i];
++				if (arena != NULL) {
++					malloc_printf(
++					    "\narenas[%u]:\n", i);
++					stats_print(arena);
++				}
++			}
++		}
++#endif /* #ifdef MALLOC_STATS */
++		_malloc_message("--- End malloc statistics ---\n", "", "");
++	}
++}
++
++/*
++ * FreeBSD's pthreads implementation calls malloc(3), so the malloc
++ * implementation has to take pains to avoid infinite recursion during
++ * initialization.
++ */
++static inline bool
++malloc_init(void)
++{
++
++	if (malloc_initialized == false)
++		return (malloc_init_hard());
++
++	return (false);
++}
++
++static bool
++malloc_init_hard(void)
++{
++	unsigned i;
++	int linklen;
++	char buf[PATH_MAX + 1];
++	const char *opts = NULL;
++
++	if (malloc_initialized) {
++		/*
++		 * Another thread initialized the allocator before this one
++		 * acquired init_lock.
++		 */
++		return (false);
++	}
++
++	/* Get number of CPUs. */
++	{
++		ncpus = 1;
++	}
++
++	/* Get page size. */
++	{
++		long result;
++
++		result = sysconf(_SC_PAGESIZE);
++		assert(result != -1);
++		pagesize = (unsigned)result;
++
++		/*
++		 * We assume that pagesize is a power of 2 when calculating
++		 * pagesize_mask and pagesize_2pow.
++		 */
++		assert(((result - 1) & result) == 0);
++		pagesize_mask = result - 1;
++		pagesize_2pow = ffs((int)result) - 1;
++	}
++
++	for (i = 0; i < 3; i++) {
++		unsigned j;
++
++		/* Get runtime configuration. */
++		switch (i) {
++		case 0:
++			if ((linklen = readlink("/etc/malloc.conf", buf,
++						sizeof(buf) - 1)) != -1) {
++				/*
++				 * Use the contents of the "/etc/malloc.conf"
++				 * symbolic link's name.
++				 */
++				buf[linklen] = '\0';
++				opts = buf;
++			} else {
++				/* No configuration specified. */
++				buf[0] = '\0';
++				opts = buf;
++			}
++			break;
++		case 1:
++			if ((opts = getenv("MALLOC_OPTIONS")) != NULL) {
++				/*
++				 * Do nothing; opts is already initialized to
++				 * the value of the MALLOC_OPTIONS environment
++				 * variable.
++				 */
++			} else {
++				/* No configuration specified. */
++				buf[0] = '\0';
++				opts = buf;
++			}
++			break;
++		case 2:
++			if (_malloc_options != NULL) {
++				/*
++				 * Use options that were compiled into the
++				 * program.
++				 */
++				opts = _malloc_options;
++			} else {
++				/* No configuration specified. */
++				buf[0] = '\0';
++				opts = buf;
++			}
++			break;
++		default:
++			/* NOTREACHED */
++			assert(false);
++		}
++
++		for (j = 0; opts[j] != '\0'; j++) {
++			unsigned k, nreps;
++			bool nseen;
++
++			/* Parse repetition count, if any. */
++			for (nreps = 0, nseen = false;; j++, nseen = true) {
++				switch (opts[j]) {
++					case '0': case '1': case '2': case '3':
++					case '4': case '5': case '6': case '7':
++					case '8': case '9':
++						nreps *= 10;
++						nreps += opts[j] - '0';
++						break;
++					default:
++						goto MALLOC_OUT;
++				}
++			}
++MALLOC_OUT:
++			if (nseen == false)
++				nreps = 1;
++
++			for (k = 0; k < nreps; k++) {
++				switch (opts[j]) {
++				case 'a':
++					opt_abort = false;
++					break;
++				case 'A':
++					opt_abort = true;
++					break;
++				case 'b':
++#ifdef MALLOC_BALANCE
++					opt_balance_threshold >>= 1;
++#endif
++					break;
++				case 'B':
++#ifdef MALLOC_BALANCE
++					if (opt_balance_threshold == 0)
++						opt_balance_threshold = 1;
++					else if ((opt_balance_threshold << 1)
++					    > opt_balance_threshold)
++						opt_balance_threshold <<= 1;
++#endif
++					break;
++				case 'd':
++#ifdef MALLOC_DSS
++					opt_dss = false;
++#endif
++					break;
++				case 'D':
++#ifdef MALLOC_DSS
++					opt_dss = true;
++#endif
++					break;
++				case 'f':
++					opt_dirty_max >>= 1;
++					break;
++				case 'F':
++					if (opt_dirty_max == 0)
++						opt_dirty_max = 1;
++					else if ((opt_dirty_max << 1) != 0)
++						opt_dirty_max <<= 1;
++					break;
++				case 'h':
++					/* Compatibility hack for RELENG_7. */
++					opt_dirty_max = DIRTY_MAX_DEFAULT;
++					break;
++				case 'H':
++					/* Compatibility hack for RELENG_7. */
++					opt_dirty_max = 0;
++					break;
++				case 'j':
++					opt_junk = false;
++					break;
++				case 'J':
++					opt_junk = true;
++					break;
++				case 'k':
++					/*
++					 * Chunks always require at least one
++					 * header page, so chunks can never be
++					 * smaller than two pages.
++					 */
++					if (opt_chunk_2pow > pagesize_2pow + 1)
++						opt_chunk_2pow--;
++					break;
++				case 'K':
++					if (opt_chunk_2pow + 1 <
++					    (sizeof(size_t) << 3))
++						opt_chunk_2pow++;
++					break;
++				case 'm':
++#ifdef MALLOC_DSS
++					opt_mmap = false;
++#endif
++					break;
++				case 'M':
++#ifdef MALLOC_DSS
++					opt_mmap = true;
++#endif
++					break;
++				case 'n':
++					opt_narenas_lshift--;
++					break;
++				case 'N':
++					opt_narenas_lshift++;
++					break;
++				case 'p':
++					opt_print_stats = false;
++					break;
++				case 'P':
++					opt_print_stats = true;
++					break;
++				case 'q':
++					if (opt_quantum_2pow > QUANTUM_2POW_MIN)
++						opt_quantum_2pow--;
++					break;
++				case 'Q':
++					if (opt_quantum_2pow < pagesize_2pow -
++					    1)
++						opt_quantum_2pow++;
++					break;
++				case 's':
++					if (opt_small_max_2pow >
++					    QUANTUM_2POW_MIN)
++						opt_small_max_2pow--;
++					break;
++				case 'S':
++					if (opt_small_max_2pow < pagesize_2pow
++					    - 1)
++						opt_small_max_2pow++;
++					break;
++				case 'u':
++					opt_utrace = false;
++					break;
++				case 'U':
++					opt_utrace = true;
++					break;
++				case 'v':
++					opt_sysv = false;
++					break;
++				case 'V':
++					opt_sysv = true;
++					break;
++				case 'x':
++					opt_xmalloc = false;
++					break;
++				case 'X':
++					opt_xmalloc = true;
++					break;
++				case 'z':
++					opt_zero = false;
++					break;
++				case 'Z':
++					opt_zero = true;
++					break;
++				default: {
++					char cbuf[2];
++
++					cbuf[0] = opts[j];
++					cbuf[1] = '\0';
++					_malloc_message("(malloc) Unsupported character "
++					    "in malloc options: '", cbuf,
++					    "'\n");
++				}
++				}
++			}
++		}
++	}
++
++#ifdef MALLOC_DSS
++	/* Make sure that there is some method for acquiring memory. */
++	if (opt_dss == false && opt_mmap == false)
++		opt_mmap = true;
++#endif
++
++	/* Take care to call atexit() only once. */
++	if (opt_print_stats) {
++		/* Print statistics at exit. */
++		atexit(malloc_print_stats);
++	}
++
++	/* Set variables according to the value of opt_small_max_2pow. */
++	if (opt_small_max_2pow < opt_quantum_2pow)
++		opt_small_max_2pow = opt_quantum_2pow;
++	small_max = (1U << opt_small_max_2pow);
++
++	/* Set bin-related variables. */
++	bin_maxclass = (pagesize >> 1);
++	assert(opt_quantum_2pow >= TINY_MIN_2POW);
++	ntbins = opt_quantum_2pow - TINY_MIN_2POW;
++	assert(ntbins <= opt_quantum_2pow);
++	nqbins = (small_max >> opt_quantum_2pow);
++	nsbins = pagesize_2pow - opt_small_max_2pow - 1;
++
++	/* Set variables according to the value of opt_quantum_2pow. */
++	quantum = (1U << opt_quantum_2pow);
++	quantum_mask = quantum - 1;
++	if (ntbins > 0)
++		small_min = (quantum >> 1) + 1;
++	else
++		small_min = 1;
++	assert(small_min <= quantum);
++
++	/* Set variables according to the value of opt_chunk_2pow. */
++	chunksize = (1LU << opt_chunk_2pow);
++	chunksize_mask = chunksize - 1;
++	chunk_npages = (chunksize >> pagesize_2pow);
++	{
++		size_t header_size;
++
++		/*
++		 * Compute the header size such that it is large
++		 * enough to contain the page map and enough nodes for the
++		 * worst case: one node per non-header page plus one extra for
++		 * situations where we briefly have one more node allocated
++		 * than we will need.
++		 */
++		header_size = sizeof(arena_chunk_t) +
++		    (sizeof(arena_chunk_map_t) * (chunk_npages - 1));
++		arena_chunk_header_npages = (header_size >> pagesize_2pow) +
++		    ((header_size & pagesize_mask) != 0);
++	}
++	arena_maxclass = chunksize - (arena_chunk_header_npages <<
++	    pagesize_2pow);
++
++#ifdef MALLOC_STATS
++	memset(&stats_chunks, 0, sizeof(chunk_stats_t));
++#endif
++
++	/* Various sanity checks that regard configuration. */
++	assert(quantum >= sizeof(void *));
++	assert(quantum <= pagesize);
++	assert(chunksize >= pagesize);
++	assert(quantum * 4 <= chunksize);
++
++	/* Initialize chunks data. */
++	extent_tree_ad_new(&huge);
++#ifdef MALLOC_DSS
++	dss_base = sbrk(0);
++	dss_prev = dss_base;
++	dss_max = dss_base;
++	extent_tree_szad_new(&dss_chunks_szad);
++	extent_tree_ad_new(&dss_chunks_ad);
++#endif
++#ifdef MALLOC_STATS
++	huge_nmalloc = 0;
++	huge_ndalloc = 0;
++	huge_allocated = 0;
++#endif
++
++	/* Initialize base allocation data structures. */
++#ifdef MALLOC_STATS
++	base_mapped = 0;
++#endif
++#ifdef MALLOC_DSS
++	/*
++	 * Allocate a base chunk here, since it doesn't actually have to be
++	 * chunk-aligned.  Doing this before allocating any other chunks allows
++	 * the use of space that would otherwise be wasted.
++	 */
++	if (opt_dss)
++		base_pages_alloc(0);
++#endif
++	base_nodes = NULL;
++
++	if (ncpus > 1) {
++		/*
++		 * For SMP systems, create four times as many arenas as there
++		 * are CPUs by default.
++		 */
++		opt_narenas_lshift += 2;
++	}
++
++	/* Determine how many arenas to use. */
++	narenas = ncpus;
++	if (opt_narenas_lshift > 0) {
++		if ((narenas << opt_narenas_lshift) > narenas)
++			narenas <<= opt_narenas_lshift;
++		/*
++		 * Make sure not to exceed the limits of what base_alloc() can
++		 * handle.
++		 */
++		if (narenas * sizeof(arena_t *) > chunksize)
++			narenas = chunksize / sizeof(arena_t *);
++	} else if (opt_narenas_lshift < 0) {
++		if ((narenas >> -opt_narenas_lshift) < narenas)
++			narenas >>= -opt_narenas_lshift;
++		/* Make sure there is at least one arena. */
++		if (narenas == 0)
++			narenas = 1;
++	}
++#ifdef MALLOC_BALANCE
++	assert(narenas != 0);
++	for (narenas_2pow = 0;
++	     (narenas >> (narenas_2pow + 1)) != 0;
++	     narenas_2pow++);
++#endif
++
++#ifdef NO_TLS
++	if (narenas > 1) {
++		static const unsigned primes[] = {1, 3, 5, 7, 11, 13, 17, 19,
++		    23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83,
++		    89, 97, 101, 103, 107, 109, 113, 127, 131, 137, 139, 149,
++		    151, 157, 163, 167, 173, 179, 181, 191, 193, 197, 199, 211,
++		    223, 227, 229, 233, 239, 241, 251, 257, 263};
++		unsigned nprimes, parenas;
++
++		/*
++		 * Pick a prime number of hash arenas that is more than narenas
++		 * so that direct hashing of pthread_self() pointers tends to
++		 * spread allocations evenly among the arenas.
++		 */
++		assert((narenas & 1) == 0); /* narenas must be even. */
++		nprimes = (sizeof(primes) >> SIZEOF_INT_2POW);
++		parenas = primes[nprimes - 1]; /* In case not enough primes. */
++		for (i = 1; i < nprimes; i++) {
++			if (primes[i] > narenas) {
++				parenas = primes[i];
++				break;
++			}
++		}
++		narenas = parenas;
++	}
++#endif
++
++#ifndef NO_TLS
++#  ifndef MALLOC_BALANCE
++	next_arena = 0;
++#  endif
++#endif
++
++	/* Allocate and initialize arenas. */
++	arenas = (arena_t **)base_alloc(sizeof(arena_t *) * narenas);
++	if (arenas == NULL) {
++		return (true);
++	}
++	/*
++	 * Zero the array.  In practice, this should always be pre-zeroed,
++	 * since it was just mmap()ed, but let's be sure.
++	 */
++	memset(arenas, 0, sizeof(arena_t *) * narenas);
++
++	/*
++	 * Initialize one arena here.  The rest are lazily created in
++	 * choose_arena_hard().
++	 */
++	arenas_extend(0);
++	if (arenas[0] == NULL) {
++		return (true);
++	}
++#ifndef NO_TLS
++	/*
++	 * Assign the initial arena to the initial thread, in order to avoid
++	 * spurious creation of an extra arena if the application switches to
++	 * threaded mode.
++	 */
++	arenas_map = arenas[0];
++#endif
++	/*
++	 * Seed here for the initial thread, since choose_arena_hard() is only
++	 * called for other threads.  The seed value doesn't really matter.
++	 */
++#ifdef MALLOC_BALANCE
++	SPRN(balance, 42);
++#endif
++
++	malloc_initialized = true;
++	return (false);
++}
++
++/*
++ * End general internal functions.
++ */
++/******************************************************************************/
++/*
++ * Begin malloc(3)-compatible functions.
++ */
++
++void *
++malloc(size_t size)
++{
++	void *ret;
++
++	if (malloc_init()) {
++		ret = NULL;
++		goto RETURN;
++	}
++
++	if (size == 0) {
++		if (opt_sysv == false)
++			size = 1;
++		else {
++			ret = NULL;
++			goto RETURN;
++		}
++	}
++
++	ret = imalloc(size);
++
++RETURN:
++	if (ret == NULL) {
++		if (opt_xmalloc) {
++			_malloc_message("(malloc) Error in malloc(): out of memory\n", "",
++			    "");
++			abort();
++		}
++		errno = ENOMEM;
++	}
++
++	return (ret);
++}
++
++int
++posix_memalign(void **memptr, size_t alignment, size_t size)
++{
++	int ret;
++	void *result;
++
++	if (malloc_init())
++		result = NULL;
++	else {
++		/* Make sure that alignment is a large enough power of 2. */
++		if (((alignment - 1) & alignment) != 0
++		    || alignment < sizeof(void *)) {
++			if (opt_xmalloc) {
++				_malloc_message("(malloc) Error in posix_memalign(): "
++				    "invalid alignment\n", "", "");
++				abort();
++			}
++			result = NULL;
++			ret = EINVAL;
++			goto RETURN;
++		}
++
++		result = ipalloc(alignment, size);
++	}
++
++	if (result == NULL) {
++		if (opt_xmalloc) {
++			_malloc_message("(malloc) Error in posix_memalign(): out of memory\n",
++			"", "");
++			abort();
++		}
++		ret = ENOMEM;
++		goto RETURN;
++	}
++
++	*memptr = result;
++	ret = 0;
++
++RETURN:
++	return (ret);
++}
++
++void *
++calloc(size_t num, size_t size)
++{
++	void *ret;
++	size_t num_size;
++
++	if (malloc_init()) {
++		num_size = 0;
++		ret = NULL;
++		goto RETURN;
++	}
++
++	num_size = num * size;
++	if (num_size == 0) {
++		if ((opt_sysv == false) && ((num == 0) || (size == 0)))
++			num_size = 1;
++		else {
++			ret = NULL;
++			goto RETURN;
++		}
++	/*
++	 * Try to avoid division here.  We know that it isn't possible to
++	 * overflow during multiplication if neither operand uses any of the
++	 * most significant half of the bits in a size_t.
++	 */
++	} else if (((num | size) & (SIZE_T_MAX << (sizeof(size_t) << 2)))
++	    && (num_size / size != num)) {
++		/* size_t overflow. */
++		ret = NULL;
++		goto RETURN;
++	}
++
++	ret = icalloc(num_size);
++
++RETURN:
++	if (ret == NULL) {
++		if (opt_xmalloc) {
++			_malloc_message("(malloc) Error in calloc(): out of memory\n", "",
++			    "");
++			abort();
++		}
++		errno = ENOMEM;
++	}
++
++	return (ret);
++}
++
++void *
++realloc(void *ptr, size_t size)
++{
++	void *ret;
++
++	if (size == 0) {
++		if (opt_sysv == false)
++			size = 1;
++		else {
++			if (ptr != NULL)
++				idalloc(ptr);
++			ret = NULL;
++			goto RETURN;
++		}
++	}
++
++	if (ptr != NULL) {
++		assert(malloc_initialized);
++
++		ret = iralloc(ptr, size);
++
++		if (ret == NULL) {
++			if (opt_xmalloc) {
++				_malloc_message("(malloc) Error in realloc(): out of "
++				    "memory\n", "", "");
++				abort();
++			}
++			errno = ENOMEM;
++		}
++	} else {
++		if (malloc_init())
++			ret = NULL;
++		else
++			ret = imalloc(size);
++
++		if (ret == NULL) {
++			if (opt_xmalloc) {
++				_malloc_message("(malloc) Error in realloc(): out of "
++				    "memory\n", "", "");
++				abort();
++			}
++			errno = ENOMEM;
++		}
++	}
++
++RETURN:
++	return (ret);
++}
++
++void
++free(void *ptr)
++{
++
++	if (ptr != NULL) {
++		assert(malloc_initialized);
++
++		idalloc(ptr);
++	}
++}
++
++/*
++ * End malloc(3)-compatible functions.
++ */
++/******************************************************************************/
++/*
++ * Begin non-standard functions.
++ */
++
++size_t
++malloc_usable_size(const void *ptr)
++{
++
++	assert(ptr != NULL);
++
++	return (isalloc(ptr));
++}
++
++/*
++ * End non-standard functions.
++ */
++/******************************************************************************/
++/*
++ * Begin library-private functions, used by threading libraries for protection
++ * of malloc during fork().  These functions are only called if the program is
++ * running in threaded mode, so there is no need to check whether the program
++ * is threaded here.
++ */
++
++void
++_malloc_prefork(void)
++{
++}
++
++void
++_malloc_postfork(void)
++{
++}
++
++/*
++ * End library-private functions.
++ */
++/******************************************************************************/
+Index: nginx-catap/nginx/src/os/unix/ngx_obsd_malloc.c
+===================================================================
+--- /dev/null
++++ nginx-catap/nginx/src/os/unix/ngx_obsd_malloc.c
+@@ -0,0 +1,1479 @@
++/*
++ * Copyright (c) 2008 Kirill A. Korinsiy <catap@catap.ru>, adaptive for nginx.
++ */
++/*	$OpenBSD: malloc.c,v 1.110 2008/11/20 09:05:15 otto Exp $	*/
++/*
++ * Copyright (c) 2008 Otto Moerbeek <otto@drijf.net>
++ *
++ * Permission to use, copy, modify, and distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
++ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
++ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
++ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
++ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
++ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
++ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
++ */
++
++/*
++ * Parts of this code, mainly the sub page sized chunk management code is
++ * derived from the malloc implementation with the following license:
++ */
++/*
++ * ----------------------------------------------------------------------------
++ * "THE BEER-WARE LICENSE" (Revision 42):
++ * <phk@FreeBSD.ORG> wrote this file.  As long as you retain this notice you
++ * can do whatever you want with this stuff. If we meet some day, and you think
++ * this stuff is worth it, you can buy me a beer in return.  Poul-Henning Kamp
++ * ----------------------------------------------------------------------------
++ */
++
++/* #define MALLOC_STATS */
++
++#include <sys/types.h>
++#include <sys/param.h>
++#include <sys/mman.h>
++#include <sys/uio.h>
++#include <errno.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdio.h>
++#include <unistd.h>
++
++#ifdef MALLOC_STATS
++#include <fcntl.h>
++#endif
++
++#define MALLOC_MINSHIFT		4
++#define MALLOC_MAXSHIFT		16
++
++#if defined(__sparc__) && !defined(__sparcv9__)
++#define MALLOC_PAGESHIFT	(13U)
++#else
++#define MALLOC_PAGESHIFT	(PGSHIFT)
++#endif
++
++static int align = 0;
++static size_t g_alignment = 0;
++
++extern int __libc_enable_secure;
++
++static int issetugid(void)
++{
++	if (__libc_enable_secure) return 1;
++	if (getuid() != geteuid()) return 1;
++	if (getgid() != getegid()) return 1;
++	return 0;
++}
++
++#define PGSHIFT 12
++#define MADV_FREE MADV_DONTNEED
++
++
++#define MALLOC_PAGESIZE		(1UL << MALLOC_PAGESHIFT)
++#define MALLOC_MINSIZE		(1UL << MALLOC_MINSHIFT)
++#define MALLOC_PAGEMASK		(MALLOC_PAGESIZE - 1)
++#define MASK_POINTER(p)		((void *)(((uintptr_t)(p)) & ~MALLOC_PAGEMASK))
++
++#define MALLOC_MAXCHUNK		(1 << (MALLOC_PAGESHIFT-1))
++#define MALLOC_MAXCACHE		256
++#define MALLOC_DELAYED_CHUNKS	16	/* should be power of 2 */
++/*
++ * When the P option is active, we move allocations between half a page
++ * and a whole page towards the end, subject to alignment constraints.
++ * This is the extra headroom we allow. Set to zero to be the most
++ * strict.
++ */
++#define MALLOC_LEEWAY		0
++
++#define PAGEROUND(x)  (((x) + (MALLOC_PAGEMASK)) & ~MALLOC_PAGEMASK)
++
++/*
++ * What to use for Junk.  This is the byte value we use to fill with
++ * when the 'J' option is enabled. Use SOME_JUNK right after alloc,
++ * and SOME_FREEJUNK right before free.
++ */
++#define SOME_JUNK		0xd0	/* as in "Duh" :-) */
++#define SOME_FREEJUNK		0xdf
++
++#define MMAP(sz)	mmap(NULL, (size_t)(sz), PROT_READ | PROT_WRITE, \
++    MAP_ANON | MAP_PRIVATE, -1, (off_t) 0)
++
++#define MMAPA(a,sz)	mmap((a), (size_t)(sz), PROT_READ | PROT_WRITE, \
++    MAP_ANON | MAP_PRIVATE, -1, (off_t) 0)
++
++struct region_info {
++	void *p;		/* page; low bits used to mark chunks */
++	uintptr_t size;		/* size for pages, or chunk_info pointer */
++};
++
++struct dir_info {
++	u_int32_t canary1;
++	struct region_info *r;		/* region slots */
++	size_t regions_total;		/* number of region slots */
++	size_t regions_bits;		/* log2 of total */
++	size_t regions_free;		/* number of free slots */
++					/* list of free chunk info structs */
++	struct chunk_info *chunk_info_list;
++					/* lists of chunks with free slots */
++	struct chunk_info *chunk_dir[MALLOC_MAXSHIFT];
++	size_t free_regions_size;	/* free pages cached */
++					/* free pages cache */
++	struct region_info free_regions[MALLOC_MAXCACHE];
++					/* delayed free chunk slots */
++	void *delayed_chunks[MALLOC_DELAYED_CHUNKS];
++#ifdef MALLOC_STATS
++	size_t inserts;
++	size_t insert_collisions;
++	size_t finds;
++	size_t find_collisions;
++	size_t deletes;
++	size_t delete_moves;
++	size_t cheap_realloc_tries;
++	size_t cheap_reallocs;
++#define STATS_INC(x) ((x)++)
++#define STATS_ZERO(x) ((x) = 0)
++#else
++#define STATS_INC(x)	/* nothing */
++#define STATS_ZERO(x)	/* nothing */
++#endif /* MALLOC_STATS */
++	u_int32_t canary2;
++};
++
++
++/*
++ * This structure describes a page worth of chunks.
++ *
++ * How many bits per u_long in the bitmap
++ */
++#define MALLOC_BITS		(NBBY * sizeof(u_long))
++struct chunk_info {
++	struct chunk_info *next;	/* next on the free list */
++	void *page;			/* pointer to the page */
++	u_int32_t canary;
++	u_short size;			/* size of this page's chunks */
++	u_short shift;			/* how far to shift for this size */
++	u_short free;			/* how many free chunks */
++	u_short total;			/* how many chunk */
++					/* which chunks are free */
++	u_long bits[(MALLOC_PAGESIZE / MALLOC_MINSIZE) / MALLOC_BITS];
++};
++
++static struct dir_info	g_pool;
++static char	*malloc_func;		/* current function */
++char		*malloc_options;	/* compile-time options */
++
++static int	malloc_abort = 1;	/* abort() on error */
++static int	malloc_active;		/* status of malloc */
++static int	malloc_freeprot;	/* mprotect free pages PROT_NONE? */
++static int	malloc_hint;		/* call madvice on free pages?  */
++static int	malloc_junk;		/* junk fill? */
++static int	malloc_move = 1;	/* move allocations to end of page? */
++static int	malloc_realloc;		/* always realloc? */
++static int	malloc_xmalloc;		/* xmalloc behaviour? */
++static int	malloc_zero;		/* zero fill? */
++static size_t	malloc_guard;		/* use guard pages after allocations? */
++
++static u_int	malloc_cache = 64;	/* free pages we cache */
++static size_t	malloc_guarded;		/* bytes used for guards */
++static size_t	malloc_used;		/* bytes allocated */
++
++#ifdef MALLOC_STATS
++static int	malloc_stats;		/* dump statistics at end */
++#endif
++
++static size_t rbytesused;		/* random bytes used */
++static u_char rbytes[512];		/* random bytes */
++static u_char getrbyte(void);
++
++extern char	*__progname;
++
++/* low bits of r->p determine size: 0 means >= page size and p->size holding
++ *  real size, otherwise r->size is a shift count, or 1 for malloc(0)
++*/
++#define REALSIZE(sz, r) 					\
++	(sz) = (uintptr_t)(r)->p & MALLOC_PAGEMASK,		\
++	(sz) = ((sz) == 0 ? (r)->size : (size_t)((sz) == 1 ? 0 : (1 << ((sz)-1))))
++
++static inline size_t
++hash(void *p)
++{
++	size_t sum;
++	union {
++		uintptr_t p;
++		unsigned short a[sizeof(void *) / sizeof(short)];
++	} u;
++	u.p = (uintptr_t)p >> MALLOC_PAGESHIFT;
++	sum = u.a[0];
++	sum = (sum << 7) - sum + u.a[1];
++#ifdef __LP64__
++	sum = (sum << 7) - sum + u.a[2];
++	sum = (sum << 7) - sum + u.a[3];
++#endif
++	return sum;
++}
++
++#ifdef MALLOC_STATS
++static void
++dump_chunk(int fd, struct chunk_info *p, int fromfreelist)
++{
++	char buf[64];
++
++	while (p) {
++		snprintf(buf, sizeof(buf), "chunk %d %d/%d %p\n", p->size,
++		    p->free, p->total, p->page);
++		write(fd, buf, strlen(buf));
++		if (!fromfreelist)
++			break;
++		p = p->next;
++		if (p != NULL) {
++			snprintf(buf, sizeof(buf), "    ");
++			write(fd, buf, strlen(buf));
++		}
++	}
++}
++
++static void
++dump_free_chunk_info(int fd, struct dir_info *d)
++{
++	char buf[64];
++	int i;
++
++	snprintf(buf, sizeof(buf), "Free chunk structs:\n");
++	write(fd, buf, strlen(buf));
++	for (i = 0; i < MALLOC_MAXSHIFT; i++) {
++		struct chunk_info *p = d->chunk_dir[i];
++		if (p != NULL) {
++			snprintf(buf, sizeof(buf), "%2d) ", i);
++			write(fd, buf, strlen(buf));
++			dump_chunk(fd, p, 1);
++		}
++	}
++
++}
++
++static void
++dump_free_page_info(int fd, struct dir_info *d)
++{
++	char buf[64];
++	unsigned int i;
++
++	snprintf(buf, sizeof(buf), "Free pages cached: %zu\n",
++	    d->free_regions_size);
++	write(fd, buf, strlen(buf));
++	for (i = 0; i < malloc_cache; i++) {
++		if (d->free_regions[i].p != NULL) {
++			snprintf(buf, sizeof(buf), "%2d) ", i);
++			write(fd, buf, strlen(buf));
++			snprintf(buf, sizeof(buf), "free at %p: %zu\n",
++			    d->free_regions[i].p, d->free_regions[i].size);
++			write(fd, buf, strlen(buf));
++		}
++	}
++}
++
++static void
++malloc_dump1(int fd, struct dir_info *d)
++{
++	char buf[64];
++	size_t i, realsize;
++
++	snprintf(buf, sizeof(buf), "Malloc dir of %s at %p\n", __progname, d);
++	write(fd, buf, strlen(buf));
++	snprintf(buf, sizeof(buf), "Regions slots %zu\n", d->regions_total);
++	write(fd, buf, strlen(buf));
++	snprintf(buf, sizeof(buf), "Finds %zu/%zu %f\n", d->finds,
++	    d->find_collisions,
++	    1.0 + (double)d->find_collisions / d->finds);
++	write(fd, buf, strlen(buf));
++	snprintf(buf, sizeof(buf), "Inserts %zu/%zu %f\n", d->inserts,
++	    d->insert_collisions,
++	    1.0 + (double)d->insert_collisions / d->inserts);
++	write(fd, buf, strlen(buf));
++	snprintf(buf, sizeof(buf), "Deletes %zu/%zu\n", d->deletes,
++	     d->delete_moves);
++	write(fd, buf, strlen(buf));
++	snprintf(buf, sizeof(buf), "Cheap reallocs %zu/%zu\n",
++	    d->cheap_reallocs, d->cheap_realloc_tries);
++	write(fd, buf, strlen(buf));
++	snprintf(buf, sizeof(buf), "Regions slots free %zu\n", d->regions_free);
++	write(fd, buf, strlen(buf));
++	for (i = 0; i < d->regions_total; i++) {
++		if (d->r[i].p != NULL) {
++			size_t h = hash(d->r[i].p) &
++			    (d->regions_total - 1);
++			snprintf(buf, sizeof(buf), "%4zx) #%zx %zd ",
++			    i, h, h - i);
++			write(fd, buf, strlen(buf));
++			REALSIZE(realsize, &d->r[i]);
++			if (realsize > MALLOC_MAXCHUNK) {
++				snprintf(buf, sizeof(buf),
++				    "%p: %zu\n", d->r[i].p, realsize);
++				write(fd, buf, strlen(buf));
++			} else
++				dump_chunk(fd,
++				    (struct chunk_info *)d->r[i].size, 0);
++		}
++	}
++	dump_free_chunk_info(fd, d);
++	dump_free_page_info(fd, d);
++	snprintf(buf, sizeof(buf), "In use %zu\n", malloc_used);
++	write(fd, buf, strlen(buf));
++	snprintf(buf, sizeof(buf), "Guarded %zu\n", malloc_guarded);
++	write(fd, buf, strlen(buf));
++}
++
++
++void
++malloc_dump(int fd)
++{
++	malloc_dump1(fd, &g_pool);
++}
++
++static void
++malloc_exit(void)
++{
++	const char q[] = "malloc() warning: Couldn't dump stats\n";
++	int save_errno = errno, fd;
++
++	fd = open("malloc.out", O_RDWR|O_APPEND);
++	if (fd != -1) {
++		malloc_dump(fd);
++		close(fd);
++	} else
++		write(STDERR_FILENO, q, sizeof(q) - 1);
++	errno = save_errno;
++}
++#endif /* MALLOC_STATS */
++
++
++
++static void
++wrterror(char *p)
++{
++	char		*q = " error: ";
++	struct iovec	iov[5];
++
++	iov[0].iov_base = __progname;
++	iov[0].iov_len = strlen(__progname);
++	iov[1].iov_base = malloc_func;
++	iov[1].iov_len = strlen(malloc_func);
++	iov[2].iov_base = q;
++	iov[2].iov_len = strlen(q);
++	iov[3].iov_base = p;
++	iov[3].iov_len = strlen(p);
++	iov[4].iov_base = "\n";
++	iov[4].iov_len = 1;
++	writev(STDERR_FILENO, iov, 5);
++
++#ifdef MALLOC_STATS
++	if (malloc_stats)
++		malloc_dump(STDERR_FILENO);
++#endif /* MALLOC_STATS */
++	//malloc_active--;
++	if (malloc_abort)
++		abort();
++}
++
++/*
++ * Cache maintenance. We keep at most malloc_cache pages cached.
++ * If the cache is becoming full, unmap pages in the cache for real,
++ * and then add the region to the cache
++ * Opposed to the regular region data structure, the sizes in the
++ * cache are in MALLOC_PAGESIZE units.
++ */
++static void
++unmap(struct dir_info *d, void *p, size_t sz)
++{
++	size_t psz = sz >> MALLOC_PAGESHIFT;
++	size_t rsz, tounmap;
++	struct region_info *r;
++	u_int i, offset;
++
++	if (sz != PAGEROUND(sz)) {
++		wrterror("munmap round");
++		return;
++	}
++
++	if (psz > malloc_cache) {
++		if (munmap(p, sz))
++			wrterror("munmap");
++		malloc_used -= sz;
++		return;
++	}
++	tounmap = 0;
++	rsz = malloc_cache - d->free_regions_size;
++	if (psz > rsz)
++		tounmap = psz - rsz;
++	offset = getrbyte();
++	for (i = 0; tounmap > 0 && i < malloc_cache; i++) {
++		r = &d->free_regions[(i + offset) & (malloc_cache - 1)];
++		if (r->p != NULL) {
++			rsz = r->size << MALLOC_PAGESHIFT;
++			if (munmap(r->p, rsz))
++				wrterror("munmap");
++			r->p = NULL;
++			if (tounmap > r->size)
++				tounmap -= r->size;
++			else
++				tounmap = 0;
++			d->free_regions_size -= r->size;
++			r->size = 0;
++			malloc_used -= rsz;
++		}
++	}
++	if (tounmap > 0)
++		wrterror("malloc cache underflow");
++	for (i = 0; i < malloc_cache; i++) {
++		r = &d->free_regions[i];
++		if (r->p == NULL) {
++			if (malloc_hint)
++				madvise(p, sz, MADV_FREE);
++			if (malloc_freeprot)
++				mprotect(p, sz, PROT_NONE);
++			r->p = p;
++			r->size = psz;
++			d->free_regions_size += psz;
++			break;
++		}
++	}
++	if (i == malloc_cache)
++		wrterror("malloc free slot lost");
++	if (d->free_regions_size > malloc_cache)
++		wrterror("malloc cache overflow");
++}
++
++static void
++zapcacheregion(struct dir_info *d, void *p)
++{
++	u_int i;
++	struct region_info *r;
++	size_t rsz;
++
++	for (i = 0; i < malloc_cache; i++) {
++		r = &d->free_regions[i];
++		if (r->p == p) {
++			rsz = r->size << MALLOC_PAGESHIFT;
++			if (munmap(r->p, rsz))
++				wrterror("munmap");
++			r->p = NULL;
++			d->free_regions_size -= r->size;
++			r->size = 0;
++			malloc_used -= rsz;
++		}
++	}
++}
++
++static void *
++map(struct dir_info *d, size_t sz, int zero_fill)
++{
++	size_t psz = sz >> MALLOC_PAGESHIFT;
++	struct region_info *r, *big = NULL;
++	u_int i, offset;
++	void *p;
++
++	if (sz != PAGEROUND(sz)) {
++		wrterror("map round");
++		return NULL;
++	}
++	if (psz > d->free_regions_size) {
++		p = MMAP(sz);
++		if (p != MAP_FAILED)
++			malloc_used += sz;
++		/* zero fill not needed */
++		return p;
++	}
++	offset = getrbyte();
++	for (i = 0; i < malloc_cache; i++) {
++		r = &d->free_regions[(i + offset) & (malloc_cache - 1)];
++		if (r->p != NULL) {
++			if (r->size == psz) {
++				p = r->p;
++				if (malloc_freeprot)
++					mprotect(p, sz, PROT_READ | PROT_WRITE);
++				if (malloc_hint)
++					madvise(p, sz, MADV_NORMAL);
++				r->p = NULL;
++				r->size = 0;
++				d->free_regions_size -= psz;
++				if (zero_fill)
++					memset(p, 0, sz);
++				else if (malloc_junk && malloc_freeprot)
++					memset(p, SOME_FREEJUNK, sz);
++				return p;
++			} else if (r->size > psz)
++				big = r;
++		}
++	}
++	if (big != NULL) {
++		r = big;
++		p = (char *)r->p + ((r->size - psz) << MALLOC_PAGESHIFT);
++		if (malloc_freeprot)
++			mprotect(p, sz, PROT_READ | PROT_WRITE);
++		if (malloc_hint)
++			madvise(p, sz, MADV_NORMAL);
++		r->size -= psz;
++		d->free_regions_size -= psz;
++		if (zero_fill)
++			memset(p, 0, sz);
++		return p;
++	}
++	p = MMAP(sz);
++	if (p != MAP_FAILED)
++		malloc_used += sz;
++	if (d->free_regions_size > malloc_cache)
++		wrterror("malloc cache");
++	/* zero fill not needed */
++	return p;
++}
++
++static void
++rbytes_init(void)
++{
++	rbytesused = 0;
++}
++
++static u_char
++getrbyte(void)
++{
++	if (rbytesused >= sizeof(rbytes))
++		rbytes_init();
++	return rbytes[rbytesused++];
++}
++
++/*
++ * Initialize a dir_info, which should have been cleared by caller
++ */
++static int
++omalloc_init(struct dir_info *d)
++{
++	char *p, b[64];
++	int i, j;
++	size_t regioninfo_size;
++
++	rbytes_init();
++
++	for (i = 0; i < 3; i++) {
++		switch (i) {
++		case 0:
++			j = readlink("/etc/malloc.conf", b, sizeof b - 1);
++			if (j <= 0)
++				continue;
++			b[j] = '\0';
++			p = b;
++			break;
++		case 1:
++			if (issetugid() == 0)
++				p = getenv("MALLOC_OPTIONS");
++			else
++				continue;
++			break;
++		case 2:
++			p = malloc_options;
++			break;
++		default:
++			p = NULL;
++		}
++
++		for (; p != NULL && *p != '\0'; p++) {
++			switch (*p) {
++			case '>':
++				malloc_cache <<= 1;
++				if (malloc_cache > MALLOC_MAXCACHE)
++					malloc_cache = MALLOC_MAXCACHE;
++				break;
++			case '<':
++				malloc_cache >>= 1;
++				break;
++			case 'a':
++				malloc_abort = 0;
++				break;
++			case 'A':
++				malloc_abort = 1;
++				break;
++#ifdef MALLOC_STATS
++			case 'd':
++				malloc_stats = 0;
++				break;
++			case 'D':
++				malloc_stats = 1;
++				break;
++#endif /* MALLOC_STATS */
++			case 'f':
++				malloc_freeprot = 0;
++				break;
++			case 'F':
++				malloc_freeprot = 1;
++				break;
++			case 'g':
++				malloc_guard = 0;
++				break;
++			case 'G':
++				malloc_guard = MALLOC_PAGESIZE;
++				break;
++			case 'h':
++				malloc_hint = 0;
++				break;
++			case 'H':
++				malloc_hint = 1;
++				break;
++			case 'j':
++				malloc_junk = 0;
++				break;
++			case 'J':
++				malloc_junk = 1;
++				break;
++			case 'n':
++			case 'N':
++				break;
++			case 'p':
++				malloc_move = 0;
++				break;
++			case 'P':
++				malloc_move = 1;
++				break;
++			case 'r':
++				malloc_realloc = 0;
++				break;
++			case 'R':
++				malloc_realloc = 1;
++				break;
++			case 'x':
++				malloc_xmalloc = 0;
++				break;
++			case 'X':
++				malloc_xmalloc = 1;
++				break;
++			case 'z':
++				malloc_zero = 0;
++				break;
++			case 'Z':
++				malloc_zero = 1;
++				break;
++			default: {
++				const char q[] = "malloc() warning: "
++				    "unknown char in MALLOC_OPTIONS\n";
++				write(STDERR_FILENO, q, sizeof(q) - 1);
++				break;
++			}
++			}
++		}
++	}
++
++	/*
++	 * We want junk in the entire allocation, and zero only in the part
++	 * the user asked for.
++	 */
++	if (malloc_zero)
++		malloc_junk = 1;
++
++#ifdef MALLOC_STATS
++	if (malloc_stats && (atexit(malloc_exit) == -1)) {
++		const char q[] = "malloc() warning: atexit(2) failed."
++		    " Will not be able to dump stats on exit\n";
++		write(STDERR_FILENO, q, sizeof(q) - 1);
++	}
++#endif /* MALLOC_STATS */
++
++	d->regions_bits = 9;
++	d->regions_free = d->regions_total = 1 << d->regions_bits;
++	regioninfo_size = d->regions_total * sizeof(struct region_info);
++	d->r = MMAP(regioninfo_size);
++	if (d->r == MAP_FAILED) {
++		wrterror("malloc init mmap failed");
++		d->regions_total = 0;
++		return 1;
++	}
++	malloc_used += regioninfo_size;
++	memset(d->r, 0, regioninfo_size);
++	d->canary1 = ((rand() >> 4) & 0xffff) | ((rand() << 12) & 0xffff0000);
++	d->canary2 = ~d->canary1;
++	return 0;
++}
++
++static int
++omalloc_grow(struct dir_info *d)
++{
++	size_t newbits;
++	size_t newtotal;
++	size_t newsize;
++	size_t mask;
++	size_t i;
++	struct region_info *p;
++
++	if (d->regions_total > SIZE_MAX / sizeof(struct region_info) / 2 )
++		return 1;
++
++	newbits = d->regions_bits + 1;
++	newtotal = d->regions_total * 2;
++	newsize = newtotal * sizeof(struct region_info);
++	mask = newtotal - 1;
++
++	p = MMAP(newsize);
++	if (p == MAP_FAILED)
++		return 1;
++	
++	malloc_used += newsize;
++	memset(p, 0, newsize);
++	STATS_ZERO(d->inserts);
++	STATS_ZERO(d->insert_collisions);
++	for (i = 0; i < d->regions_total; i++) { 
++		void *q = d->r[i].p;
++		if (q != NULL) {
++			size_t index = hash(q) & mask;
++			STATS_INC(d->inserts);
++			while (p[index].p != NULL) {
++				index = (index - 1) & mask;
++				STATS_INC(d->insert_collisions);
++			}
++			p[index] = d->r[i];
++		}
++	}
++	/* avoid pages containing meta info to end up in cache */
++	if (munmap(d->r, d->regions_total * sizeof(struct region_info))) 
++		wrterror("munmap");
++	else
++		malloc_used -= d->regions_total * sizeof(struct region_info);
++	d->regions_free = d->regions_free + d->regions_total;
++	d->regions_total = newtotal;
++	d->regions_bits = newbits;
++	d->r = p;
++	return 0;
++}
++
++static struct chunk_info *
++alloc_chunk_info(struct dir_info *d)
++{
++	struct chunk_info *p;
++	unsigned int i;
++
++	if (d->chunk_info_list == NULL) {
++		p = MMAP(MALLOC_PAGESIZE);
++		if (p == MAP_FAILED)
++			return NULL;
++		malloc_used += MALLOC_PAGESIZE;
++		for (i = 0; i < MALLOC_PAGESIZE / sizeof(*p); i++) {
++			p[i].next = d->chunk_info_list;
++			d->chunk_info_list = &p[i];
++		}
++	}
++	p = d->chunk_info_list;
++	d->chunk_info_list = p->next;
++	memset(p, 0, sizeof *p);
++	p->canary = d->canary1;
++	return p;
++}
++
++
++static void
++put_chunk_info(struct dir_info *d, struct chunk_info *p)
++{
++	p->next = d->chunk_info_list;
++	d->chunk_info_list = p;
++}  
++
++static int
++insert(struct dir_info *d, void *p, size_t sz)
++{
++	size_t index;
++	size_t mask;
++	void *q;
++
++	if (d->regions_free * 4 < d->regions_total) {
++		if (omalloc_grow(d))
++			return 1;
++	}
++	mask = d->regions_total - 1;
++	index = hash(p) & mask;
++	q = d->r[index].p;
++	STATS_INC(d->inserts);
++	while (q != NULL) {
++		index = (index - 1) & mask;
++		q = d->r[index].p;
++		STATS_INC(d->insert_collisions);
++	}
++	d->r[index].p = p;
++	d->r[index].size = sz;
++	d->regions_free--;
++	return 0;
++}
++
++static struct region_info *
++find(struct dir_info *d, void *p)
++{
++	size_t index;
++	size_t mask = d->regions_total - 1;
++	void *q, *r;
++
++	if (d->canary1 != ~d->canary2)
++		wrterror("internal struct corrupt");
++	p = MASK_POINTER(p);
++	index = hash(p) & mask;
++	r = d->r[index].p;
++	q = MASK_POINTER(r);
++	STATS_INC(d->finds);
++	while (q != p && r != NULL) {
++		index = (index - 1) & mask;
++		r = d->r[index].p;
++		q = MASK_POINTER(r);
++		STATS_INC(d->find_collisions);
++	}
++	return q == p ? &d->r[index] : NULL;
++}
++
++static void
++delete(struct dir_info *d, struct region_info *ri)
++{
++	/* algorithm R, Knuth Vol III section 6.4 */
++	size_t mask = d->regions_total - 1;
++	size_t i, j, r;
++
++	if (d->regions_total & (d->regions_total - 1))
++		wrterror("regions_total not 2^x");
++	d->regions_free++;
++	STATS_INC(g_pool.deletes);
++
++	i = ri - d->r;
++	for (;;) {
++		d->r[i].p = NULL;
++		d->r[i].size = 0;
++		j = i;
++		for (;;) {
++			i = (i - 1) & mask;
++			if (d->r[i].p == NULL)
++				return;
++			r = hash(d->r[i].p) & mask;
++			if ((i <= r && r < j) || (r < j && j < i) ||
++			    (j < i && i <= r))
++				continue;
++			d->r[j] = d->r[i];
++			STATS_INC(g_pool.delete_moves);
++			break;
++		}
++
++	}
++}
++ 
++/*
++ * Allocate a page of chunks
++ */
++static struct chunk_info *
++omalloc_make_chunks(struct dir_info *d, int bits)
++{
++	struct chunk_info *bp;
++	void		*pp;
++	long		i, k;
++
++	/* Allocate a new bucket */
++	pp = map(d, MALLOC_PAGESIZE, 0);
++	if (pp == MAP_FAILED)
++		return NULL;
++
++	bp = alloc_chunk_info(d);
++	if (bp == NULL) {
++		unmap(d, pp, MALLOC_PAGESIZE);
++		return NULL;
++	}
++
++	/* memory protect the page allocated in the malloc(0) case */
++	if (bits == 0) {
++		bp->size = 0;
++		bp->shift = 1;
++		i = MALLOC_MINSIZE - 1;
++		while (i >>= 1)
++			bp->shift++;
++		bp->total = bp->free = MALLOC_PAGESIZE >> bp->shift;
++		bp->page = pp;
++
++		k = mprotect(pp, MALLOC_PAGESIZE, PROT_NONE);
++		if (k < 0) {
++			unmap(d, pp, MALLOC_PAGESIZE);
++			put_chunk_info(d, bp);
++			return NULL;
++		}
++	} else {
++		bp->size = (1UL << bits);
++		bp->shift = bits;
++		bp->total = bp->free = MALLOC_PAGESIZE >> bits;
++		bp->page = pp;
++	}
++
++	/* set all valid bits in the bitmap */
++	k = bp->total;
++	i = 0;
++
++	/* Do a bunch at a time */
++	for (; (u_long)(k - i) >= MALLOC_BITS; i += MALLOC_BITS)
++		bp->bits[i / MALLOC_BITS] = ~0UL;
++
++	for (; i < k; i++)
++		bp->bits[i / MALLOC_BITS] |= 1UL << (i % MALLOC_BITS);
++
++	bp->next = d->chunk_dir[bits];
++	d->chunk_dir[bits] = bp;
++
++	bits++;
++	if ((uintptr_t)pp & bits)
++		wrterror("pp & bits");
++
++	insert(d, (void *)((uintptr_t)pp | bits), (uintptr_t)bp);
++	return bp;
++}
++
++
++/*
++ * Allocate a chunk
++ */
++static void *
++malloc_bytes(struct dir_info *d, size_t size)
++{
++	int		i, j;
++	size_t		k;
++	u_long		u, *lp;
++	struct chunk_info *bp;
++
++	/* Don't bother with anything less than this */
++	/* unless we have a malloc(0) requests */
++	if (size != 0 && size < MALLOC_MINSIZE)
++		size = MALLOC_MINSIZE;
++
++	/* Find the right bucket */
++	if (size == 0)
++		j = 0;
++	else {
++		j = MALLOC_MINSHIFT;
++		i = (size - 1) >> (MALLOC_MINSHIFT - 1);
++		while (i >>= 1)
++			j++;
++	}
++
++	/* If it's empty, make a page more of that size chunks */
++	bp = d->chunk_dir[j];
++	if (bp == NULL && (bp = omalloc_make_chunks(d, j)) == NULL)
++		return NULL;
++
++	if (bp->canary != d->canary1)
++		wrterror("chunk info corrupted");
++	/* Find first word of bitmap which isn't empty */
++	for (lp = bp->bits; !*lp; lp++)
++		/* EMPTY */;
++
++	/* Find that bit, and tweak it */
++	u = 1;
++	k = 0;
++	while (!(*lp & u)) {
++		u += u;
++		k++;
++	}
++
++	/* advance a random # of positions */
++	i = (getrbyte() & (MALLOC_DELAYED_CHUNKS - 1)) % bp->free;
++	while (i > 0) {
++		u += u;
++		k++;
++		if (k >= MALLOC_BITS) {
++			lp++;
++			u = 1;
++			k = 0;
++		}
++		if ((u_long)(lp - bp->bits) > (bp->total - 1) / MALLOC_BITS) {
++			wrterror("chunk overflow");
++			errno = EFAULT;
++			return (NULL);
++		}
++		if (*lp & u)
++			i--;
++	}
++
++	*lp ^= u;
++
++	/* If there are no more free, remove from free-list */
++	if (!--bp->free) {
++		d->chunk_dir[j] = bp->next;
++		bp->next = NULL;
++	}
++	/* Adjust to the real offset of that chunk */
++	k += (lp - bp->bits) * MALLOC_BITS;
++	k <<= bp->shift;
++
++	if (malloc_junk && bp->size > 0)
++		memset((char *)bp->page + k, SOME_JUNK, bp->size);
++	return ((char *)bp->page + k);
++}
++
++
++/*
++ * Free a chunk, and possibly the page it's on, if the page becomes empty.
++ */
++static void
++free_bytes(struct dir_info *d, struct region_info *r, void *ptr)
++{
++	struct chunk_info *info, **mp;
++	long i;
++
++	info = (struct chunk_info *)r->size;
++	if (info->canary != d->canary1)
++		wrterror("chunk info corrupted");
++
++	/* Find the chunk number on the page */
++	i = ((uintptr_t)ptr & MALLOC_PAGEMASK) >> info->shift;
++
++	if ((uintptr_t)ptr & ((1UL << (info->shift)) - 1)) {
++		wrterror("modified chunk-pointer");
++		return;
++	}
++	if (info->bits[i / MALLOC_BITS] & (1UL << (i % MALLOC_BITS))) {
++		wrterror("chunk is already free");
++		return;
++	}
++
++	info->bits[i / MALLOC_BITS] |= 1UL << (i % MALLOC_BITS);
++	info->free++;
++
++	if (info->size != 0)
++		mp = d->chunk_dir + info->shift;
++	else
++		mp = d->chunk_dir;
++
++	if (info->free == 1) {
++		/* Page became non-full */
++
++		/* Insert in address order */
++		while (*mp != NULL && (*mp)->next != NULL &&
++		    (*mp)->next->page < info->page)
++			mp = &(*mp)->next;
++		info->next = *mp;
++		*mp = info;
++		return;
++	}
++	if (info->free != info->total)
++		return;
++
++	/* Find & remove this page in the queue */
++	while (*mp != info) {
++		mp = &((*mp)->next);
++		if (!*mp) {
++			wrterror("not on queue");
++			errno = EFAULT;
++			return;
++		}
++	}
++	*mp = info->next;
++
++	if (info->size == 0 && !malloc_freeprot)
++		mprotect(info->page, MALLOC_PAGESIZE, PROT_READ | PROT_WRITE);
++	unmap(d, info->page, MALLOC_PAGESIZE);
++
++	delete(d, r);
++	put_chunk_info(d, info);
++}
++
++
++
++static void *
++omalloc(size_t sz, int zero_fill)
++{
++	void *p;
++	size_t psz;
++
++	if (sz > MALLOC_MAXCHUNK) {
++		if (sz >= SIZE_MAX - malloc_guard - MALLOC_PAGESIZE) {
++			errno = ENOMEM;
++			return NULL;
++		}
++		sz += malloc_guard;
++		psz = PAGEROUND(sz);
++		p = map(&g_pool, psz, zero_fill);
++		if (p == MAP_FAILED) {
++			errno = ENOMEM;
++			return NULL;
++		}
++		if (insert(&g_pool, p, sz)) {
++			unmap(&g_pool, p, psz);
++			errno = ENOMEM;
++			return NULL;
++		}
++		if (malloc_guard) {
++			if (mprotect((char *)p + psz - malloc_guard,
++			    malloc_guard, PROT_NONE))
++				wrterror("mprotect");
++			malloc_guarded += malloc_guard;
++		}
++
++		if (malloc_move &&
++		    sz - malloc_guard < MALLOC_PAGESIZE - MALLOC_LEEWAY) {
++			/* fill whole allocation */
++			if (malloc_junk)
++				memset(p, SOME_JUNK, psz - malloc_guard);
++			/* shift towards the end */
++			p = ((char *)p) + ((MALLOC_PAGESIZE - MALLOC_LEEWAY -
++			    (sz - malloc_guard)) & ~(MALLOC_MINSIZE-1));
++			/* fill zeros if needed and overwritten above */
++			if (zero_fill && malloc_junk)
++				memset(p, 0, sz - malloc_guard);
++		} else {
++			if (malloc_junk) {
++				if (zero_fill)
++				  memset((char*)p + sz - malloc_guard,
++					 SOME_JUNK, psz - sz);
++				else
++				  memset(p,
++					 SOME_JUNK, psz - malloc_guard);
++			}
++		}
++
++	} else {
++		/* takes care of SOME_JUNK */
++		p = malloc_bytes(&g_pool, sz);
++		if (zero_fill && p != NULL && sz > 0)
++			memset(p, 0, sz);
++	}
++
++	return p;
++}
++
++/*
++ * Common function for handling recursion.  Only
++ * print the error message once, to avoid making the problem
++ * potentially worse.
++ */
++static void  
++malloc_recurse(void)
++{
++	static int noprint;
++
++	if (noprint == 0) {
++		noprint = 1;
++		wrterror("recursive call");
++	}
++	malloc_active--;
++	errno = EDEADLK;
++}
++
++void *
++malloc(size_t size)
++{
++	void *r;
++	int saved_errno = errno;
++
++	malloc_func = " in malloc():";
++	if (!g_pool.regions_total) {
++		if (omalloc_init(&g_pool)) {
++			if (malloc_xmalloc)
++				wrterror("out of memory");
++			errno = ENOMEM;
++			return NULL;
++		}
++	}
++	if (malloc_active++) {
++		malloc_recurse();
++		return NULL;
++	}
++	r = omalloc(size, malloc_zero);
++	malloc_active--;
++	if (r == NULL && malloc_xmalloc) {
++		wrterror("out of memory");
++		errno = ENOMEM;
++	}
++	if (r != NULL)
++		errno = saved_errno;
++	return r;
++}
++
++static void
++ofree(void *p)
++{
++	struct region_info *r;
++	size_t sz;
++
++	r = find(&g_pool, p);
++	if (r == NULL) {
++		wrterror("bogus pointer (double free?)");
++		return;
++	}
++	REALSIZE(sz, r);
++	if (sz > MALLOC_MAXCHUNK) {
++		if (sz - malloc_guard >= MALLOC_PAGESIZE - MALLOC_LEEWAY) {
++			if (r->p != p) {
++				wrterror("bogus pointer");
++				return;
++			}
++		} else {
++#if notyetbecause_of_realloc
++			/* shifted towards the end */
++			if (p != ((char *)r->p) + ((MALLOC_PAGESIZE -
++			    MALLOC_MINSIZE - sz - malloc_guard) &
++			    ~(MALLOC_MINSIZE-1))) {
++			}
++#endif
++			p = r->p;
++		}
++		if (malloc_guard) {
++			if (sz < malloc_guard)
++				wrterror("guard size");
++			if (!malloc_freeprot) {
++				if (mprotect((char *)p + PAGEROUND(sz) -
++				    malloc_guard, malloc_guard,
++				    PROT_READ | PROT_WRITE))
++					wrterror("mprotect");
++			}
++			malloc_guarded -= malloc_guard;
++		}
++		if (malloc_junk && !malloc_freeprot)
++			memset(p, SOME_FREEJUNK, PAGEROUND(sz) - malloc_guard);
++		unmap(&g_pool, p, PAGEROUND(sz));
++		delete(&g_pool, r);
++	} else {
++		void *tmp;
++		int i;
++
++		if (malloc_junk && sz > 0)
++			memset(p, SOME_FREEJUNK, sz);
++		if (!malloc_freeprot) {
++			i = getrbyte() & (MALLOC_DELAYED_CHUNKS - 1);
++			tmp = p;
++			p = g_pool.delayed_chunks[i];
++			g_pool.delayed_chunks[i] = tmp;
++		}
++		if (p != NULL) {
++			r = find(&g_pool, p);
++			if (r == NULL) {
++				wrterror("bogus pointer (double free?)");
++				return;
++			}
++			free_bytes(&g_pool, r, p);
++		}
++	}
++}
++
++void
++free(void *ptr)
++{
++	int saved_errno = errno;
++
++	/* This is legal. */
++	if (ptr == NULL)
++		return;
++
++	malloc_func = " in free():";  
++	if (malloc_active++) {
++		malloc_recurse();
++		return;
++	}
++	ofree(ptr);
++	malloc_active--;
++	errno = saved_errno;
++}
++
++
++static void *
++orealloc(void *p, size_t newsz)
++{
++	struct region_info *r;
++	size_t oldsz, goldsz, gnewsz;
++	void *q;
++
++	if (p == NULL)
++		return omalloc(newsz, 0);
++
++	r = find(&g_pool, p);
++	if (r == NULL) {
++		wrterror("bogus pointer (double free?)");
++		return NULL;
++	}
++	if (newsz >= SIZE_MAX - malloc_guard - MALLOC_PAGESIZE) {
++		errno = ENOMEM;
++		return NULL;
++	}
++
++	REALSIZE(oldsz, r);
++	goldsz = oldsz;
++	if (oldsz > MALLOC_MAXCHUNK) {
++		if (oldsz < malloc_guard)
++			wrterror("guard size");
++		oldsz -= malloc_guard;
++	}
++
++	gnewsz = newsz;
++	if (gnewsz > MALLOC_MAXCHUNK)
++		gnewsz += malloc_guard;
++
++	if (newsz > MALLOC_MAXCHUNK && oldsz > MALLOC_MAXCHUNK && p == r->p &&
++	    !malloc_realloc) {
++		size_t roldsz = PAGEROUND(goldsz);
++		size_t rnewsz = PAGEROUND(gnewsz);
++
++		if (rnewsz > roldsz) {
++			if (!malloc_guard) {
++				STATS_INC(g_pool.cheap_realloc_tries);
++				zapcacheregion(&g_pool, (char*)p + roldsz);
++				q = MMAPA((char*)p + roldsz, rnewsz - roldsz);
++				if (q == (char*)p + roldsz) {
++					malloc_used += rnewsz - roldsz;
++					if (malloc_junk)
++						memset(q, SOME_JUNK,
++						    rnewsz - roldsz);
++					r->size = newsz;
++					STATS_INC(g_pool.cheap_reallocs);
++					return p;
++				} else if (q != MAP_FAILED)
++					munmap(q, rnewsz - roldsz);
++			}
++		} else if (rnewsz < roldsz) {
++			if (malloc_guard) {
++				if (mprotect((char *)p + roldsz - malloc_guard,
++				    malloc_guard, PROT_READ | PROT_WRITE))
++					wrterror("mprotect");
++				if (mprotect((char *)p + rnewsz - malloc_guard,
++				    malloc_guard, PROT_NONE))
++					wrterror("mprotect");
++			}
++			unmap(&g_pool, (char *)p + rnewsz, roldsz - rnewsz);
++			r->size = gnewsz;
++			return p;
++		} else {
++			if (newsz > oldsz && malloc_junk)
++				memset((char *)p + newsz, SOME_JUNK,
++				    rnewsz - malloc_guard - newsz);
++			r->size = gnewsz;
++			return p;
++		}
++	}
++	if (newsz <= oldsz && newsz > oldsz / 2 && !malloc_realloc) {
++		if (malloc_junk && newsz > 0)
++			memset((char *)p + newsz, SOME_JUNK, oldsz - newsz);
++		return p;
++	} else if (newsz != oldsz || malloc_realloc) {
++		q = omalloc(newsz, 0);
++		if (q == NULL)
++			return NULL;
++		if (newsz != 0 && oldsz != 0)
++			memcpy(q, p, oldsz < newsz ? oldsz : newsz);
++		ofree(p);
++		return q;
++	} else
++		return p;
++}
++
++void *
++realloc(void *ptr, size_t size)
++{
++	void *r;
++	int saved_errno = errno;
++
++	malloc_func = " in realloc():";
++	if (!g_pool.regions_total) {
++		if (omalloc_init(&g_pool)) {
++			if (malloc_xmalloc)
++				wrterror("out of memory");
++			errno = ENOMEM;
++			return NULL;
++		}
++	}
++	if (malloc_active++) {
++		malloc_recurse();
++		return NULL;
++	}
++
++	r = orealloc(ptr, size);
++
++	malloc_active--;
++	if (r == NULL && malloc_xmalloc) {
++		wrterror("out of memory");
++		errno = ENOMEM;
++	}
++	if (r != NULL)
++		errno = saved_errno;
++	return r;
++}
++
++
++#define MUL_NO_OVERFLOW	(1UL << (sizeof(size_t) * 4))
++
++void *
++calloc(size_t nmemb, size_t size)
++{
++	void *r;
++	int saved_errno = errno;
++
++	if (!align)
++	malloc_func = " in calloc():";
++	if (!g_pool.regions_total) {
++		if (omalloc_init(&g_pool)) {
++			if (malloc_xmalloc)
++				wrterror("out of memory");
++			errno = ENOMEM;
++			return NULL;
++		}
++	}
++	if ((nmemb >= MUL_NO_OVERFLOW || size >= MUL_NO_OVERFLOW) &&
++	    nmemb > 0 && SIZE_MAX / nmemb < size) {
++		if (malloc_xmalloc)
++			wrterror("out of memory");
++		errno = ENOMEM;
++		return NULL;
++	}
++
++	if (malloc_active++) {
++		malloc_recurse();
++		return NULL;
++	}
++
++	size *= nmemb;
++	r = omalloc(size, 1);
++
++	malloc_active--;
++	if (!align)
++	if (r == NULL && malloc_xmalloc) {
++		wrterror("out of memory");
++		errno = ENOMEM;
++	}
++	if (r != NULL)
++		errno = saved_errno;
++	return r;
++}
++static int ispowerof2 (size_t a) {
++	size_t b;
++	for (b = 1ULL << (sizeof(size_t)*NBBY - 1); b > 1; b >>= 1)
++	  if (b == a)
++		return 1;
++	return 0;
++}
++
++int posix_memalign(void **memptr, size_t alignment, size_t size)
++{
++	void *r;
++	if ((alignment < sizeof(void*)) || (alignment % sizeof(void*) != 0)) return EINVAL;
++	if (!ispowerof2(alignment)) return EINVAL;
++	if (alignment < MALLOC_MINSIZE) alignment = MALLOC_MINSIZE;
++	size_t max = alignment > size ? alignment : size;
++	if (alignment <= MALLOC_PAGESIZE)
++		r = malloc(max);
++	else {
++		align = 1;
++		g_alignment = alignment;
++		r = malloc(size);
++		align=0;
++	}
++	*memptr = r;
++	if (!r) return ENOMEM;
++	return 0;
++}
++
++void *memalign(size_t boundary, size_t size)
++{
++	void *r = NULL;
++	posix_memalign(&r, boundary, size);
++	return r;
++}
++
++void *valloc(size_t size)
++{
++	void *r = NULL;
++	posix_memalign(&r, MALLOC_PAGESIZE, size);
++	return r;
++}

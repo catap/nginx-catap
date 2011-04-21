@@ -51,3 +51,4 @@ mdounin_resolve-various-cycles-with-named-locations-and-post_action.patch
 mdounin_escape-question-in-file-names.patch
 mdounin_escape-html-in-file-names.patch
 mdounin_build-with-embedded-perl-and-openssl.patch
+ngx_allocs.patch
