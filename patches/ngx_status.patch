@@ -2412,7 +2412,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_header_filter_module.c
 +	status_position = ngx_http_get_status_position(r->headers_out.status);
 +	counter = clcf->status_counters[status_position];
 +
-+	if (counter) {
++	if (status_position != NGX_ERROR && counter) {
 +	    ngx_status_fetch_add(counter);
 +	}
 +    }
@@ -3581,7 +3581,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
 +
 +    peer = &rrp->peers->peer[rrp->current];
 +
-+    if (!(state & NGX_PEER_FAILED) && peer &&
++    if (p != NGX_ERROR && !(state & NGX_PEER_FAILED) && peer &&
 +        peer->status_counters && peer->status_counters[p]) {
 +	ngx_status_fetch_add(peer->status_counters[p]);
 +    }
@@ -3603,7 +3603,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
          if (peer->max_fails) {
              peer->current_weight -= peer->weight / peer->max_fails;
          }
-@@ -758,3 +854,126 @@ ngx_http_upstream_save_round_robin_peer_
+@@ -758,3 +854,129 @@ ngx_http_upstream_save_round_robin_peer_
  }
  
  #endif
@@ -3700,6 +3700,9 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
 +            }
 +
 +            p = ngx_http_get_status_position(n);
++            if (p == NGX_ERROR) {
++                return NGX_ERROR;
++            }
 +
 +            counter = ngx_pcalloc(cf->pool, sizeof(ngx_status_counter_t));
 +            if (counter == NULL) {
