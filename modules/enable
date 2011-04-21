@@ -10,3 +10,8 @@ ngx_http_compose_filter_module
 ngx_http_gunzip_filter_module
 ngx_http_ip_tos_filter_module
 ngx_http_upstream_keepalive
+nginx-upload-module
+nginx-eval-module
+nginx-mogilefs-module
+nginx-syslog-module
+nginx-udplog-module

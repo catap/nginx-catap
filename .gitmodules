@@ -40,3 +40,18 @@
 [submodule "modules/ngx_http_upstream_keepalive"]
 	path = modules/ngx_http_upstream_keepalive
 	url = git://github.com/catap/ngx_http_upstream_keepalive.git
+[submodule "modules/nginx-upload-module"]
+	path = modules/nginx-upload-module
+	url = git://github.com/catap/nginx-upload-module.git
+[submodule "modules/nginx-eval-module"]
+	path = modules/nginx-eval-module
+	url = git://github.com/catap/nginx-eval-module.git
+[submodule "modules/nginx-mogilefs-module"]
+	path = modules/nginx-mogilefs-module
+	url = git://github.com/catap/nginx-mogilefs-module.git
+[submodule "modules/nginx-syslog-module"]
+	path = modules/nginx-syslog-module
+	url = git://github.com/catap/nginx-syslog-module.git
+[submodule "modules/nginx-udplog-module"]
+	path = modules/nginx-udplog-module
+	url = git://github.com/catap/nginx-udplog-module.git
