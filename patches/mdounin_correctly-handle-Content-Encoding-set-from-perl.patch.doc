@@ -1,0 +1,5 @@
+Correctly handle Content-Encoding set from perl.
+
+This fixes double gzipping in case gzip filter enabled while perl
+returns already gzipped response.
+

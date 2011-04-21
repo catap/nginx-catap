@@ -1,0 +1,46 @@
+Index: nginx-catap/nginx/src/http/ngx_http_copy_filter_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_copy_filter_module.c
++++ nginx-catap/nginx/src/http/ngx_http_copy_filter_module.c
+@@ -158,6 +158,11 @@ ngx_http_copy_filter(ngx_http_request_t 
+             ngx_file_t            *file;
+             ngx_http_ephemeral_t  *e;
+ 
++            if (r->aio) {
++                c->busy_sendfile = NULL;
++                return rc;
++            }
++
+             file = c->busy_sendfile->file;
+             offset = c->busy_sendfile->file_pos;
+ 
+Index: nginx-catap/nginx/src/http/ngx_http_request.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_request.c
++++ nginx-catap/nginx/src/http/ngx_http_request.c
+@@ -2274,17 +2274,17 @@ ngx_http_writer(ngx_http_request_t *r)
+             return;
+         }
+ 
+-    } else {
+-        if (wev->delayed || r->aio) {
+-            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, wev->log, 0,
+-                           "http writer delayed");
++    }
+ 
+-            if (ngx_handle_write_event(wev, clcf->send_lowat) != NGX_OK) {
+-                ngx_http_close_request(r, 0);
+-            }
++    if (wev->delayed || r->aio) {
++        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, wev->log, 0,
++                       "http writer delayed");
+ 
+-            return;
++        if (ngx_handle_write_event(wev, clcf->send_lowat) != NGX_OK) {
++            ngx_http_close_request(r, 0);
+         }
++
++        return;
+     }
+ 
+     rc = ngx_http_output_filter(r, NULL);

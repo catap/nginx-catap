@@ -1,0 +1,13 @@
+Variables: honor no_cacheable for not_found variables.
+
+Variables with not_found flag set follow the same rules as ones with valid
+flag set.  Make sure ngx_http_get_flushed_variable() will flush non-cacheable
+variables with not_found flag set.
+
+This fixes at least one known problem with $args not available in subrequest
+(with args) when there were no args in main request and $args variable was
+queried in main request (reported by Laurence Rowe aka elro on irc).
+
+Also this eliminates unneeded call to ngx_http_get_indexed_variable() in
+cacheable case (as it will return cached value anyway).
+

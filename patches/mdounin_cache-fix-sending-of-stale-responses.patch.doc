@@ -1,0 +1,15 @@
+Cache: fix sending of stale responses.
+
+For normal cached responses ngx_http_cache_send() sends last buffer and then
+request finalized via ngx_http_finalize_request() call, i.e. everything is
+ok.
+
+But for stale responses (i.e. when upstream died, but we have something in
+cache) the same ngx_http_cache_send() sends last buffer, but then in
+ngx_http_upstream_finalize_request() another last buffer is send.  This
+causes duplicate final chunk to appear if chunked encoding is used (and
+resulting problems with keepalive connections and so on).
+
+Fix this by not sending in ngx_http_upstream_finalize_request()
+another last buffer if we know response was from cache.
+

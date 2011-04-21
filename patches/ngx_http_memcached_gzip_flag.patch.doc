@@ -1,0 +1,11 @@
+memcached_gzip_flag directive.
+
+This directive allows to test desired flag as returned by memcached and
+sets Content-Encoding to gzip if one found.
+
+This is reimplementation of patch by Tomash Brechko as available on
+http://openhack.ru/.  It should be a bit more correct though (at least
+I think so).  In particular, it doesn't try to detect if we are able to
+gunzip data, but instead just sets correct Content-Encoding.
+
+Originally by:  Tomash Brechko

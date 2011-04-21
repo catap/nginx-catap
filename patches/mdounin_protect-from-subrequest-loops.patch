@@ -1,0 +1,24 @@
+Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_core_module.c
++++ nginx-catap/nginx/src/http/ngx_http_core_module.c
+@@ -2354,7 +2354,6 @@ ngx_http_subrequest(ngx_http_request_t *
+     r->start_sec = tp->sec;
+     r->start_msec = tp->msec;
+ 
+-    r->main->subrequests++;
+     r->main->count++;
+ 
+     *psr = sr;
+Index: nginx-catap/nginx/src/http/ngx_http_request.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_request.c
++++ nginx-catap/nginx/src/http/ngx_http_request.c
+@@ -2012,6 +2012,7 @@ ngx_http_finalize_request(ngx_http_reque
+         if (r == c->data) {
+ 
+             r->main->count--;
++            r->main->subrequests++;
+ 
+             if (!r->logged) {
+ 

@@ -1,0 +1,15 @@
+Index: nginx-catap/nginx/src/http/modules/ngx_http_rewrite_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_rewrite_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_rewrite_module.c
+@@ -167,8 +167,8 @@ ngx_http_rewrite_handler(ngx_http_reques
+         code(e);
+     }
+ 
+-    if (e->status == NGX_DECLINED) {
+-        return NGX_DECLINED;
++    if (e->status < NGX_HTTP_BAD_REQUEST) {
++        return e->status;
+     }
+ 
+     if (r->err_status == 0) {

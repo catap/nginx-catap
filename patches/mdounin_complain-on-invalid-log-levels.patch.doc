@@ -1,0 +1,13 @@
+Complain on invalid log levels.
+
+Previously only first log level were required to be correct, while error_log
+directive in fact accepts list of levels (e.g. one may specify "error_log ...
+debug_core debug_http;").  This resulted in (avoidable) wierd behaviour on
+missing semicolon after error_log directive, e.g.
+
+error_log /path/to/log info
+index index.php;
+
+silently skipped index directive and it's arguments (trying to interpret
+them as log levels without checking to be correct).
+

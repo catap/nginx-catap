@@ -1,0 +1,27 @@
+Core: resolve various cycles with named locations and post_action.
+
+Now redirects to named locations are counted against normal uri changes
+limit, and post_action respect this limit as well.  As a result at least the
+following (bad) configurations no longer trigger infinite cycle:
+
+1. Post action which recursively triggers post action:
+
+   location / {
+       post_action /index.html;
+   }
+
+2. Post action pointing to nonexistent named location:
+
+   location / {
+       post_action @nonexistent;
+   }
+
+3. Recursive error page for 500 (Internal Server Error) pointing to
+nonexistent named location:
+
+   location / {
+       recursive_error_pages on;
+       error_page 500 @nonexistent;
+       return 500;
+   }
+

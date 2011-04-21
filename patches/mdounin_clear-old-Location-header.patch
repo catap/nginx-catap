@@ -1,0 +1,71 @@
+Index: nginx-catap/nginx/src/http/modules/ngx_http_static_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_static_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_static_module.c
+@@ -139,6 +139,10 @@ ngx_http_static_handler(ngx_http_request
+ 
+         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, log, 0, "http dir");
+ 
++        if (r->headers_out.location) {
++            r->headers_out.location->hash = 0;
++        }
++
+         r->headers_out.location = ngx_palloc(r->pool, sizeof(ngx_table_elt_t));
+         if (r->headers_out.location == NULL) {
+             return NGX_HTTP_INTERNAL_SERVER_ERROR;
+Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_core_module.c
++++ nginx-catap/nginx/src/http/ngx_http_core_module.c
+@@ -1013,6 +1013,10 @@ ngx_http_core_find_config_phase(ngx_http
+     }
+ 
+     if (rc == NGX_DONE) {
++        if (r->headers_out.location) {
++            r->headers_out.location->hash = 0;
++        }
++
+         r->headers_out.location = ngx_list_push(&r->headers_out.headers);
+         if (r->headers_out.location == NULL) {
+             ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
+@@ -1834,6 +1838,10 @@ ngx_http_send_response(ngx_http_request_
+ 
+     if (status >= NGX_HTTP_MOVED_PERMANENTLY && status <= NGX_HTTP_SEE_OTHER) {
+ 
++        if (r->headers_out.location) {
++            r->headers_out.location->hash = 0;
++        }
++
+         r->headers_out.location = ngx_list_push(&r->headers_out.headers);
+         if (r->headers_out.location == NULL) {
+             return NGX_HTTP_INTERNAL_SERVER_ERROR;
+Index: nginx-catap/nginx/src/http/ngx_http_script.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_script.c
++++ nginx-catap/nginx/src/http/ngx_http_script.c
+@@ -1114,6 +1114,10 @@ ngx_http_script_regex_end_code(ngx_http_
+                           "rewritten redirect: \"%V\"", &e->buf);
+         }
+ 
++        if (r->headers_out.location) {
++            r->headers_out.location->hash = 0;
++        }
++
+         r->headers_out.location = ngx_list_push(&r->headers_out.headers);
+         if (r->headers_out.location == NULL) {
+             e->ip = ngx_http_script_exit;
+Index: nginx-catap/nginx/src/http/ngx_http_special_response.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_special_response.c
++++ nginx-catap/nginx/src/http/ngx_http_special_response.c
+@@ -582,6 +582,10 @@ ngx_http_send_error_page(ngx_http_reques
+     ngx_str_set(&location->key, "Location");
+     location->value = uri;
+ 
++    if (r->headers_out.location) {
++        r->headers_out.location->hash = 0;
++    }
++
+     r->headers_out.location = location;
+ 
+     clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);

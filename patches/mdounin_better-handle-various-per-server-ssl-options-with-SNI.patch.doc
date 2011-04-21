@@ -1,0 +1,18 @@
+Better handle various per-server ssl options with SNI.
+
+SSL_set_SSL_CTX() doesn't touch values cached within ssl connection
+structure, it only changes certificates (at least as of now, OpenSSL
+1.0.0a and earlier).
+
+As a result settings like ssl_verify_client, ssl_verify_depth,
+ssl_prefer_server_ciphers are only configurable on per-socket basis while
+with SNI it should be possible to specify them different for two servers
+listening on the same socket.
+
+Workaround is to explicitly re-apply settings we care about from context
+to ssl connection in servername callback.
+
+Note that SSL_clear_options() is only available in OpenSSL 0.9.8m+.  I.e.
+with older versions it is not possible to clear ssl_prefer_server_ciphers
+option if it's set in default server for a socket.
+

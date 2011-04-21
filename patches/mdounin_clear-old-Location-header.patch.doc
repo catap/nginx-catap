@@ -1,0 +1,4 @@
+Clear old Location header (if any) while adding new one.
+
+This prevents incorrect behaviour when another redirect is issues within
+error_page 302 handler.

@@ -1,0 +1,5 @@
+Additional headers for proxy_ignore_headers/fastcgi_ignore_headers.
+
+Now the following headers may be ignored as well: X-Accel-Limit-Rate,
+X-Accel-Buffering, X-Accel-Charset.
+

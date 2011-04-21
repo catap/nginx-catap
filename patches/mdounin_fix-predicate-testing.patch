@@ -1,0 +1,13 @@
+Index: nginx-catap/nginx/src/http/ngx_http_script.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_script.c
++++ nginx-catap/nginx/src/http/ngx_http_script.c
+@@ -265,7 +265,7 @@ ngx_http_test_predicates(ngx_http_reques
+             return NGX_ERROR;
+         }
+ 
+-        if (val.len && val.data[0] != '0') {
++        if (val.len && (val.len != 1 || val.data[0] != '0')) {
+             return NGX_DECLINED;
+         }
+     }

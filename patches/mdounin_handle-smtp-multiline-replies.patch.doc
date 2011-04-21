@@ -1,0 +1,8 @@
+Mail: handle smtp multiline replies.
+
+See here for details:
+
+http://nginx.org/pipermail/nginx/2010-August/021713.html
+http://nginx.org/pipermail/nginx/2010-August/021784.html
+http://nginx.org/pipermail/nginx/2010-August/021785.html
+

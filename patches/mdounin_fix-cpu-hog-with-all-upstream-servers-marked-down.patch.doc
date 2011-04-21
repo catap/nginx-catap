@@ -1,0 +1,27 @@
+Fix cpu hog with all upstream servers marked "down".
+
+The following configuration causes nginx to hog cpu due to infinite loop
+in ngx_http_upstream_get_peer():
+
+   upstream backend {
+       server 127.0.0.1:8080 down;
+       server 127.0.0.1:8080 down;
+   }
+
+   server {
+      ...
+      location / {
+          proxy_pass http://backend;
+      }
+   }
+
+Make sure we don't loop infinitely in ngx_http_upstream_get_peer() but stop
+after resetting peer weights once.
+
+Return 0 if we are stuck.  This is guaranteed to work as peer 0 always exists,
+and eventually ngx_http_upstream_get_round_robin_peer() will do the right
+thing falling back to backup servers or returning NGX_BUSY.
+
+Initially posted here:
+http://nginx.org/pipermail/nginx/2010-January/018332.html
+

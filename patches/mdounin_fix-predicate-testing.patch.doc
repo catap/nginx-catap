@@ -1,0 +1,4 @@
+Fix predicate testing (*_cache_bypass, *_no_cache).
+
+Values starting with '0' were incorrectly assumed to be false.
+

@@ -1,0 +1,15 @@
+Fix socket leak with "aio sendfile" and "limit_rate" directives.
+
+Second aio post happened when timer set by limit_rate expired while we have
+aio request in flight, resulting in "second aio post" alert and socket leak.
+
+The patch adds actual protection from aio calls with r->aio already set to
+aio sendfile code in ngx_http_copy_filter().  This should fix other cases
+as well, e.g. when sending buffered to disk upstream replies while still
+talking to upstream.
+
+The ngx_http_writer() is also fixed to handle the above case (though it's
+mostly optimization now).
+
+Reported by:    Oleksandr V. Typlyns'kyi
+

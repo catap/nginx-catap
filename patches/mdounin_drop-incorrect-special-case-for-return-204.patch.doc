@@ -1,0 +1,24 @@
+Drop incorrect special case for return 204.
+
+The special case in question leads to replies without body in
+configuration like
+
+   location / { error_page 404 /zero; return 404; }
+   location /zero { return 204; }
+
+while replies with empty body are expected per protocol specs.
+
+Correct one will look like
+
+   if (status == NGX_HTTP_NO_CONTENT) {
+
+       rc = ngx_http_send_header(r);
+
+       if (rc == NGX_ERROR || r->header_only) {
+           return rc;
+       }
+
+       return ngx_http_send_special(r, NGX_HTTP_LAST);
+   }
+
+though it looks like it's better to drop this special case at all.

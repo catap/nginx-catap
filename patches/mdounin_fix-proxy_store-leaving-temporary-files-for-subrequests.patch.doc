@@ -1,0 +1,27 @@
+Upstream: fix proxy_store leaving temporary files for subrequests.
+
+Temporary files might not be removed if the "proxy_store" or "fastcgi_store"
+directives were used for subrequests (e.g. ssi includes) and client closed
+prematurely connection.
+
+When client closes connection non-active subrequests are finalized out of
+the control of upstream module, and code to remove unfinished temporary files
+in ngx_http_upstream_process_request() isn't executed.  This patch moves
+relevant code into ngx_http_upstream_finalize_request() function which is
+called in all cases (either directly or via cleanup handler installed by
+upstream module).
+
+Problem was originally noted here:
+
+http://nginx.org/pipermail/nginx-ru/2009-April/024597.html
+
+Patch was originally posted here (no changes since then):
+
+http://nginx.org/pipermail/nginx-ru/2009-May/024766.html
+
+Test case is here:
+
+http://mdounin.ru/hg/nginx-tests/rev/1d3c82227a05
+http://mdounin.ru/hg/nginx-tests/file/tip/proxy-store.t
+
+

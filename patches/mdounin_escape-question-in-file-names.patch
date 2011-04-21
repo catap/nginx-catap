@@ -1,0 +1,119 @@
+Index: nginx-catap/nginx/src/core/ngx_string.c
+===================================================================
+--- nginx-catap.orig/nginx/src/core/ngx_string.c
++++ nginx-catap/nginx/src/core/ngx_string.c
+@@ -1380,6 +1380,26 @@ ngx_escape_uri(u_char *dst, u_char *src,
+         0xffffffff  /* 1111 1111 1111 1111  1111 1111 1111 1111 */
+     };
+ 
++                    /* not ALPHA, DIGIT, "-", ".", "_", "~" */
++
++    static uint32_t   uri_component[] = {
++        0xffffffff, /* 1111 1111 1111 1111  1111 1111 1111 1111 */
++
++                    /* ?>=< ;:98 7654 3210  /.-, +*)( '&%$ #"!  */
++        0xfc009fff, /* 1111 1100 0000 0000  1001 1111 1111 1111 */
++
++                    /* _^]\ [ZYX WVUT SRQP  ONML KJIH GFED CBA@ */
++        0x78000001, /* 0111 1000 0000 0000  0000 0000 0000 0001 */
++
++                    /*  ~}| {zyx wvut srqp  onml kjih gfed cba` */
++        0xb8000001, /* 1011 1000 0000 0000  0000 0000 0000 0001 */
++
++        0xffffffff, /* 1111 1111 1111 1111  1111 1111 1111 1111 */
++        0xffffffff, /* 1111 1111 1111 1111  1111 1111 1111 1111 */
++        0xffffffff, /* 1111 1111 1111 1111  1111 1111 1111 1111 */
++        0xffffffff  /* 1111 1111 1111 1111  1111 1111 1111 1111 */
++    };
++
+                     /* " ", "#", """, "%", "'", %00-%1F, %7F-%FF */
+ 
+     static uint32_t   html[] = {
+@@ -1443,7 +1463,7 @@ ngx_escape_uri(u_char *dst, u_char *src,
+                     /* mail_auth is the same as memcached */
+ 
+     static uint32_t  *map[] =
+-        { uri, args, html, refresh, memcached, memcached };
++        { uri, args, uri_component, html, refresh, memcached, memcached };
+ 
+ 
+     escape = map[type];
+Index: nginx-catap/nginx/src/core/ngx_string.h
+===================================================================
+--- nginx-catap.orig/nginx/src/core/ngx_string.h
++++ nginx-catap/nginx/src/core/ngx_string.h
+@@ -189,12 +189,13 @@ size_t ngx_utf8_length(u_char *p, size_t
+ u_char *ngx_utf8_cpystrn(u_char *dst, u_char *src, size_t n, size_t len);
+ 
+ 
+-#define NGX_ESCAPE_URI         0
+-#define NGX_ESCAPE_ARGS        1
+-#define NGX_ESCAPE_HTML        2
+-#define NGX_ESCAPE_REFRESH     3
+-#define NGX_ESCAPE_MEMCACHED   4
+-#define NGX_ESCAPE_MAIL_AUTH   5
++#define NGX_ESCAPE_URI            0
++#define NGX_ESCAPE_ARGS           1
++#define NGX_ESCAPE_URI_COMPONENT  2
++#define NGX_ESCAPE_HTML           3
++#define NGX_ESCAPE_REFRESH        4
++#define NGX_ESCAPE_MEMCACHED      5
++#define NGX_ESCAPE_MAIL_AUTH      6
+ 
+ #define NGX_UNESCAPE_URI       1
+ #define NGX_UNESCAPE_REDIRECT  2
+Index: nginx-catap/nginx/src/http/modules/ngx_http_autoindex_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_autoindex_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_autoindex_module.c
+@@ -28,7 +28,6 @@ typedef struct {
+     size_t         escape;
+ 
+     unsigned       dir:1;
+-    unsigned       colon:1;
+ 
+     time_t         mtime;
+     off_t          size;
+@@ -338,7 +337,7 @@ ngx_http_autoindex_handler(ngx_http_requ
+         ngx_cpystrn(entry->name.data, ngx_de_name(&dir), len + 1);
+ 
+         entry->escape = 2 * ngx_escape_uri(NULL, ngx_de_name(&dir), len,
+-                                           NGX_ESCAPE_HTML);
++                                           NGX_ESCAPE_URI_COMPONENT);
+ 
+         if (utf8) {
+             entry->utf_len = ngx_utf8_length(entry->name.data, entry->name.len);
+@@ -346,8 +345,6 @@ ngx_http_autoindex_handler(ngx_http_requ
+             entry->utf_len = len;
+         }
+ 
+-        entry->colon = (ngx_strchr(entry->name.data, ':') != NULL);
+-
+         entry->dir = ngx_de_is_dir(&dir);
+         entry->mtime = ngx_de_mtime(&dir);
+         entry->size = ngx_de_size(&dir);
+@@ -373,7 +370,7 @@ ngx_http_autoindex_handler(ngx_http_requ
+             + entry[i].name.len + entry[i].escape
+             + 1                                          /* 1 is for "/" */
+             + sizeof("\">") - 1
+-            + entry[i].name.len - entry[i].utf_len + entry[i].colon * 2
++            + entry[i].name.len - entry[i].utf_len
+             + NGX_HTTP_AUTOINDEX_NAME_LEN + sizeof("&gt;") - 2
+             + sizeof("</a>") - 1
+             + sizeof(" 28-Sep-1970 12:00 ") - 1
+@@ -406,14 +403,9 @@ ngx_http_autoindex_handler(ngx_http_requ
+     for (i = 0; i < entries.nelts; i++) {
+         b->last = ngx_cpymem(b->last, "<a href=\"", sizeof("<a href=\"") - 1);
+ 
+-        if (entry[i].colon) {
+-            *b->last++ = '.';
+-            *b->last++ = '/';
+-        }
+-
+         if (entry[i].escape) {
+             ngx_escape_uri(b->last, entry[i].name.data, entry[i].name.len,
+-                           NGX_ESCAPE_HTML);
++                           NGX_ESCAPE_URI_COMPONENT);
+ 
+             b->last += entry[i].name.len + entry[i].escape;
+ 

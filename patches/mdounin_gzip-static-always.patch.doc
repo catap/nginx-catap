@@ -1,0 +1,6 @@
+Gzip static: "always" parameter in "gzip_static" directive.
+
+With "always" gzip static returns gzipped content in all cases, without
+checking if client supports it.  It is usefull if you has no gunzipped files
+on disk anyway.
+

@@ -1,0 +1,15 @@
+Autoindex: escape '?' in file names.
+
+For files with '?' in their names autoindex generated links with '?' not
+escaped.  This resulted in effectively truncated links as '?' indicates
+query string start.
+
+This is updated version of the patch originally posted at [1].  It introduces
+generic NGX_ESCAPE_URI_COMPONENT which escapes everything but unreseved
+characters as per RFC 3986.  This aproach also renders unneeded special colon
+processing (as colon is percent-encoded now), it's dropped accordingly.
+
+[1] http://nginx.org/pipermail/nginx-devel/2010-February/000112.html
+
+Reported by:    Konstantin Leonov
+

@@ -1,0 +1,5 @@
+Cache: fix sending of empty responses.
+
+Revert wrong fix for empty responses introduced in 0.8.31 and apply new one,
+rewritten to match things done by static module as close as possible.
+

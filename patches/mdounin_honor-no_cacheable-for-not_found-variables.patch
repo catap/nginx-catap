@@ -1,0 +1,13 @@
+Index: nginx-catap/nginx/src/http/ngx_http_variables.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_variables.c
++++ nginx-catap/nginx/src/http/ngx_http_variables.c
+@@ -474,7 +474,7 @@ ngx_http_get_flushed_variable(ngx_http_r
+ 
+     v = &r->variables[index];
+ 
+-    if (v->valid) {
++    if (v->valid || v->not_found) {
+         if (!v->no_cacheable) {
+             return v;
+         }

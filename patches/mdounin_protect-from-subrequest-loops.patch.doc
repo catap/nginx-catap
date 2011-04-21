@@ -1,0 +1,13 @@
+Core: protect from subrequest loops.
+
+Without protection subrequest loop results in r->count overflow and
+SIGSEGV.  Protection was broken in 0.7.25.
+
+Note that this also limits number of parallel subrequests.  This
+wasn't exactly the case before 0.7.25 as local subrequests were
+completed directly.
+
+See here for details:
+
+http://nginx.org/pipermail/nginx-ru/2010-February/032184.html
+

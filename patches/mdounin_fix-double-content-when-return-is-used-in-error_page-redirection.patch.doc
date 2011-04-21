@@ -1,0 +1,33 @@
+Fix double content when return is used in error_page redirection.
+
+Test case:
+
+  location / {
+      error_page 405 /nope;
+      return 405;
+  }
+
+  location /nope {
+      return 200;
+  }
+
+This is expected to return 405 with empty body, but in 0.8.42+ will return
+builtin 405 error page as well (though not counted in Content-Length, thus
+breaking protocol).
+
+Note that this patch also changes behaviour for "return 302 ..." and
+"rewrite ... redirect" used as error handler.  E.g.
+
+   location / {
+       error_page 405 /redirect;
+       return 405;
+   }
+
+   location /redirect {
+       rewrite ^ http://example.com/;
+   }
+
+will actually return redirect to "http://example.com/" instead of builtin 405
+error page with meaningless Location header.  This looks like correct change
+and it's in line with what happens on e.g. directory redirects in error
+handlers.

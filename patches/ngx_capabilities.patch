@@ -1,0 +1,351 @@
+Index: nginx-catap/nginx/auto/lib/capabilities/conf
+===================================================================
+--- /dev/null
++++ nginx-catap/nginx/auto/lib/capabilities/conf
+@@ -0,0 +1,19 @@
++
++# Copyright (C) Kirill A. Korinskiy
++
++
++ngx_feature="capabilities"
++ngx_feature_name="NGX_HAVE_CAPABILITIES"
++ngx_feature_run=no
++ngx_feature_incs="#include <sys/capability.h>"
++ngx_feature_path=
++ngx_feature_libs="-lcap"
++ngx_feature_test="cap_t caps;
++    caps = cap_get_proc();
++    return -1;"
++. auto/feature
++
++
++if [ $ngx_found = yes ]; then
++  CORE_LIBS="$CORE_LIBS $ngx_feature_libs"
++fi
+Index: nginx-catap/nginx/auto/os/linux
+===================================================================
+--- nginx-catap.orig/nginx/auto/os/linux
++++ nginx-catap/nginx/auto/os/linux
+@@ -130,6 +130,10 @@ ngx_feature_test="long mask = 0;
+ . auto/feature
+ 
+ 
++# capabilities
++. auto/lib/capabilities/conf
++
++
+ # crypt_r()
+ 
+ ngx_feature="crypt_r()"
+Index: nginx-catap/nginx/src/core/nginx.c
+===================================================================
+--- nginx-catap.orig/nginx/src/core/nginx.c
++++ nginx-catap/nginx/src/core/nginx.c
+@@ -154,6 +154,17 @@ static ngx_command_t  ngx_core_commands[
+ 
+ #endif
+ 
++#if (NGX_HAVE_CAPABILITIES)
++
++    { ngx_string("use_bind_capability"),
++      NGX_MAIN_CONF|NGX_DIRECT_CONF|NGX_CONF_FLAG,
++      ngx_conf_set_flag_slot,
++      0,
++      offsetof(ngx_core_conf_t, use_bind_capability),
++      NULL },
++
++#endif
++
+       ngx_null_command
+ };
+ 
+@@ -202,6 +213,9 @@ main(int argc, char *const *argv)
+     ngx_log_t        *log;
+     ngx_cycle_t      *cycle, init_cycle;
+     ngx_core_conf_t  *ccf;
++#if (NGX_HAVE_CAPABILITIES)
++    cap_value_t      cap_list[1];
++#endif
+ 
+     if (ngx_strerror_init() != NGX_OK) {
+         return 1;
+@@ -356,6 +370,23 @@ main(int argc, char *const *argv)
+ 
+     ccf = (ngx_core_conf_t *) ngx_get_conf(cycle->conf_ctx, ngx_core_module);
+ 
++#if (NGX_HAVE_CAPABILITIES)
++    if (!geteuid() && ccf->use_bind_capability) {
++        if (ngx_capabilities_prepare(log) != NGX_OK) {
++            return NGX_OK;
++        }
++
++        if (ngx_switch_user(cycle) != NGX_OK) {
++            return 1;
++        }
++
++        cap_list[0] = CAP_NET_BIND_SERVICE;
++        if (ngx_set_capability(log, 1, cap_list) != NGX_OK) {
++            return 1;
++	}
++    }
++#endif
++
+     if (ccf->master && ngx_process == NGX_PROCESS_SINGLE) {
+         ngx_process = NGX_PROCESS_MASTER;
+     }
+@@ -956,6 +987,10 @@ ngx_core_module_create_conf(ngx_cycle_t 
+     ccf->thread_stack_size = NGX_CONF_UNSET_SIZE;
+ #endif
+ 
++#if (NGX_HAVE_CAPABILITIES)
++    ccf->use_bind_capability = NGX_CONF_UNSET;
++#endif
++
+     if (ngx_array_init(&ccf->env, cycle->pool, 1, sizeof(ngx_str_t))
+         != NGX_OK)
+     {
+@@ -1020,6 +1055,10 @@ ngx_core_module_init_conf(ngx_cycle_t *c
+                NGX_OLDPID_EXT, sizeof(NGX_OLDPID_EXT));
+ 
+ 
++#if (NGX_HAVE_CAPABILITIES)
++    ngx_conf_init_value(ccf->use_bind_capability, 0);
++#endif
++
+ #if !(NGX_WIN32)
+ 
+     if (ccf->user == (uid_t) NGX_CONF_UNSET_UINT && geteuid() == 0) {
+Index: nginx-catap/nginx/src/core/ngx_cycle.h
+===================================================================
+--- nginx-catap.orig/nginx/src/core/ngx_cycle.h
++++ nginx-catap/nginx/src/core/ngx_cycle.h
+@@ -105,6 +105,10 @@ typedef struct {
+      size_t                   thread_stack_size;
+ #endif
+ 
++#if (NGX_HAVE_CAPABILITIES)
++     ngx_flag_t               use_bind_capability;
++#endif
++
+ } ngx_core_conf_t;
+ 
+ 
+Index: nginx-catap/nginx/src/os/unix/ngx_process_cycle.c
+===================================================================
+--- nginx-catap.orig/nginx/src/os/unix/ngx_process_cycle.c
++++ nginx-catap/nginx/src/os/unix/ngx_process_cycle.c
+@@ -885,27 +885,15 @@ ngx_worker_process_init(ngx_cycle_t *cyc
+     }
+ #endif
+ 
+-    if (geteuid() == 0) {
+-        if (setgid(ccf->group) == -1) {
+-            ngx_log_error(NGX_LOG_EMERG, cycle->log, ngx_errno,
+-                          "setgid(%d) failed", ccf->group);
+-            /* fatal */
+-            exit(2);
+-        }
+-
+-        if (initgroups(ccf->username, ccf->group) == -1) {
+-            ngx_log_error(NGX_LOG_EMERG, cycle->log, ngx_errno,
+-                          "initgroups(%s, %d) failed",
+-                          ccf->username, ccf->group);
+-        }
+-
+-        if (setuid(ccf->user) == -1) {
+-            ngx_log_error(NGX_LOG_EMERG, cycle->log, ngx_errno,
+-                          "setuid(%d) failed", ccf->user);
+-            /* fatal */
+-            exit(2);
+-        }
++#ifdef NGX_HAVE_CAPABILITIES
++    if (ngx_clear_capability(cycle->log) != NGX_OK) {
++	exit(2);
++    }
++#else
++    if (ngx_switch_user(cycle) == NGX_ERROR) {
++	exit(2);
+     }
++#endif
+ 
+ #if (NGX_HAVE_SCHED_SETAFFINITY)
+ 
+Index: nginx-catap/nginx/src/os/unix/ngx_user.c
+===================================================================
+--- nginx-catap.orig/nginx/src/os/unix/ngx_user.c
++++ nginx-catap/nginx/src/os/unix/ngx_user.c
+@@ -3,6 +3,10 @@
+  * Copyright (C) Igor Sysoev
+  */
+ 
++#if (NGX_HAVE_CAPABILITIES)
++#include <sys/prctl.h>
++#endif
++
+ 
+ #include <ngx_config.h>
+ #include <ngx_core.h>
+@@ -111,6 +115,133 @@ ngx_crypt(ngx_pool_t *pool, u_char *key,
+ #endif /* NGX_CRYPT */
+ 
+ 
++
++ngx_int_t ngx_switch_user(ngx_cycle_t *cycle)
++{
++    ngx_core_conf_t  *ccf;
++
++    ccf = (ngx_core_conf_t *) ngx_get_conf(cycle->conf_ctx, ngx_core_module);
++
++    if (setgid(ccf->group) == -1) {
++        ngx_log_error(NGX_LOG_EMERG, cycle->log, ngx_errno,
++                      "setgid(%d) failed", ccf->group);
++        return NGX_ERROR;
++    }
++
++    if (initgroups(ccf->username, ccf->group) == -1) {
++        ngx_log_error(NGX_LOG_EMERG, cycle->log, ngx_errno,
++                      "initgroups(%s, %d) failed",
++                      ccf->username, ccf->group);
++        return NGX_ERROR;
++    }
++
++    if (setuid(ccf->user) == -1) {
++        ngx_log_error(NGX_LOG_EMERG, cycle->log, ngx_errno,
++                      "setuid(%d) failed", ccf->user);
++        return NGX_ERROR;
++    }
++
++    return NGX_OK;
++}
++
++#if (NGX_HAVE_CAPABILITIES)
++
++ngx_int_t ngx_capabilities_prepare(ngx_log_t *log)
++{
++    if (geteuid()) {
++        return NGX_DONE;
++    }
++
++    if (prctl(PR_SET_KEEPCAPS, 1, 0, 0, 0) == -1) {
++        ngx_log_error(NGX_LOG_EMERG, log, ngx_errno,
++                      "prctl(PR_SET_KEEPCAPS, 1) failed");
++        return NGX_ERROR;
++    }
++
++    return NGX_OK;
++}
++
++
++ngx_int_t ngx_set_capability(ngx_log_t *log, ngx_int_t ncap, cap_value_t *cap_list)
++{
++    cap_t  caps;
++
++    caps = cap_get_proc();
++    if (caps == NULL) {
++        ngx_log_error(NGX_LOG_EMERG, log, ngx_errno,
++                      "cap_get_proc() failed");
++        return NGX_ERROR;
++    }
++
++    if (cap_set_flag(caps, CAP_EFFECTIVE, ncap, cap_list, CAP_SET) == -1) {
++        ngx_log_error(NGX_LOG_EMERG, log, ngx_errno,
++                      "cap_set_flag(CAP_EFFECTIVE) failed");
++        return NGX_ERROR;
++    }
++
++    if (cap_set_flag(caps, CAP_PERMITTED, ncap, cap_list, CAP_SET) == -1) {
++        ngx_log_error(NGX_LOG_EMERG, log, ngx_errno,
++                      "cap_set_flag(CAP_PERMITTED) failed");
++        return NGX_ERROR;
++    }
++
++    if (cap_set_flag(caps, CAP_INHERITABLE, ncap, cap_list, CAP_SET) == -1) {
++        ngx_log_error(NGX_LOG_EMERG, log, ngx_errno,
++                      "cap_set_flag(CAP_INHERITABLE) failed");
++        return NGX_ERROR;
++    }
++
++    if (cap_set_proc(caps) == -1) {
++        ngx_log_error(NGX_LOG_EMERG, log, ngx_errno,
++                      "cap_set_proc() failed");
++        return NGX_ERROR;
++    }
++
++    if (cap_free(caps) == -1) {
++        ngx_log_error(NGX_LOG_EMERG, log, ngx_errno,
++                      "cap_free() failed");
++        return NGX_ERROR;
++    }
++
++    return NGX_OK;
++}
++
++
++ngx_int_t ngx_clear_capability(ngx_log_t *log)
++{
++    cap_t      caps;
++
++    caps = cap_get_proc();
++    if (caps == NULL) {
++        ngx_log_error(NGX_LOG_EMERG, log, ngx_errno,
++                      "cap_get_proc() failed");
++        return NGX_ERROR;
++    }
++
++    if (cap_clear(caps) == -1) {
++        ngx_log_error(NGX_LOG_EMERG, log, ngx_errno,
++                      "cap_clear() failed");
++        return NGX_ERROR;
++    }
++
++    if (cap_set_proc(caps) == -1) {
++        ngx_log_error(NGX_LOG_EMERG, log, ngx_errno,
++                      "cap_set_proc() failed");
++        return NGX_ERROR;
++    }
++
++    if (cap_free(caps) == -1) {
++        ngx_log_error(NGX_LOG_EMERG, log, ngx_errno,
++                      "cap_free() failed");
++        return NGX_ERROR;
++    }
++
++    return NGX_OK;
++}
++
++#endif	/* NGX_HAVE_CAPABILITIES */
++
++
+ ngx_int_t ngx_get_loadavg(ngx_uint_t n)
+ {
+ #if (NGX_HAVE_SYSINFO)
+Index: nginx-catap/nginx/src/os/unix/ngx_user.h
+===================================================================
+--- nginx-catap.orig/nginx/src/os/unix/ngx_user.h
++++ nginx-catap/nginx/src/os/unix/ngx_user.h
+@@ -11,6 +11,10 @@
+ #include <ngx_config.h>
+ #include <ngx_core.h>
+ 
++#if (NGX_HAVE_CAPABILITIES)
++#include <sys/capability.h>
++#endif
++
+ 
+ typedef uid_t  ngx_uid_t;
+ typedef gid_t  ngx_gid_t;
+@@ -19,6 +23,14 @@ typedef gid_t  ngx_gid_t;
+ ngx_int_t ngx_crypt(ngx_pool_t *pool, u_char *key, u_char *salt,
+     u_char **encrypted);
+ 
++ngx_int_t ngx_switch_user(ngx_cycle_t *cycle);
++
++#if (NGX_HAVE_CAPABILITIES)
++ngx_int_t ngx_capabilities_prepare(ngx_log_t *log);
++ngx_int_t ngx_set_capability(ngx_log_t *log, ngx_int_t ncap, cap_value_t *cap_list);
++ngx_int_t ngx_clear_capability(ngx_log_t *log);
++#endif	/* NGX_HAVE_CAPABILITIES */
++
+ ngx_int_t ngx_get_loadavg(ngx_uint_t n);
+ 
+ #endif /* _NGX_USER_H_INCLUDED_ */

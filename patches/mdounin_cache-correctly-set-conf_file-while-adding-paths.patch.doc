@@ -1,0 +1,5 @@
+Cache: correctly set conf_file while adding paths.
+
+Missing conf_file causes incorrect error messages in ngx_add_path() and may
+lead to segmentation fault while reading configuration.
+

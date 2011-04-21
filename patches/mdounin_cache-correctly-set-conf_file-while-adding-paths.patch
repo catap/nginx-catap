@@ -1,0 +1,13 @@
+Index: nginx-catap/nginx/src/http/ngx_http_file_cache.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_file_cache.c
++++ nginx-catap/nginx/src/http/ngx_http_file_cache.c
+@@ -1656,6 +1656,8 @@ ngx_http_file_cache_set_slot(ngx_conf_t 
+     cache->path->manager = ngx_http_file_cache_manager;
+     cache->path->loader = ngx_http_file_cache_loader;
+     cache->path->data = cache;
++    cache->path->conf_file = cf->conf_file->file.name.data;
++    cache->path->line = cf->conf_file->line;
+ 
+     if (ngx_add_path(cf, &cache->path) != NGX_OK) {
+         return NGX_CONF_ERROR;

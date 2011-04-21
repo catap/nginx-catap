@@ -1,0 +1,16 @@
+Fix incorrect 201 replies from dav module.
+
+Replies with 201 code contain body, and we should clearly indicate it's
+empty if it's empty.  Before 0.8.32 chunked was explicitly disabled for
+201 replies and as a result empty body was indicated by connection close
+(not perfect, but worked).  Since 0.8.32 chunked is enabled, and this
+causes incorrect responses from dav module when HTTP/1.1 is used: with
+"Transfer-Encoding: chunked" but no chunks at all.
+
+Fix is to actually return empty body in special reponse handler instead
+of abusing r->header_only flag.
+
+See here for initial report:
+
+http://nginx.org/pipermail/nginx-ru/2010-October/037535.html
+
