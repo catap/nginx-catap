@@ -22,4 +22,4 @@ unapply:
 	$(MAKE) -C patches unapply
 
 test: build
-	@TEST_NGINX_BINARY=`pwd`/objs/nginx-catap prove -r -b --state=all .
+	@PERL5LIB=`pwd`/tests/lib TEST_NGINX_BINARY=`pwd`/objs/nginx-catap prove -r -b --state=all .
