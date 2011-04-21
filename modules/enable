@@ -4,3 +4,9 @@ ngx_http_rnd_filter_module
 ngx_http_hash
 ngx_http_limit_var_module
 ngx_http_dump_config_module
+ngx_http_auth_request_module
+ngx_http_bytes_filter_module
+ngx_http_compose_filter_module
+ngx_http_gunzip_filter_module
+ngx_http_ip_tos_filter_module
+ngx_http_upstream_keepalive
