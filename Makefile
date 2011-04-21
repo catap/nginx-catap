@@ -21,4 +21,4 @@ unapply:
 	$(MAKE) -C patches unapply
 
 test: build
-	@TEST_NGINX_BINARY=`pwd`/nginx/objs/nginx-catap prove -r .
+	@TEST_NGINX_BINARY=`pwd`/nginx/objs/nginx-catap prove -r -b --state=all .
