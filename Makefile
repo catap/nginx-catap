@@ -1,6 +1,7 @@
 default:	build
 
 clean: pre-clean unapply
+	@$(RM) -rf objs
 
 pre-clean:
 	$(MAKE) -C nginx clean
@@ -21,4 +22,4 @@ unapply:
 	$(MAKE) -C patches unapply
 
 test: build
-	@TEST_NGINX_BINARY=`pwd`/nginx/objs/nginx-catap prove -r -b --state=all .
+	@TEST_NGINX_BINARY=`pwd`/objs/nginx-catap prove -r -b --state=all .

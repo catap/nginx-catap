@@ -2,12 +2,15 @@
 
 pushd $(dirname $0) > /dev/null
 
+DIR=$(pwd)
+
 make apply
 
 pushd nginx > /dev/null
 ./configure \
-    $(cat ../modules/enable | \
-    while read module; do echo "--add-module=../modules/$module"; done) \
+    --builddir=${DIR}/objs \
+    $(cat ${DIR}/modules/enable | \
+    while read module; do echo "--add-module=${DIR}/modules/$module"; done) \
     $@
 popd > /dev/null
 
