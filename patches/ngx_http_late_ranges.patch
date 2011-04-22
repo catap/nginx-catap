@@ -1,0 +1,203 @@
+Index: nginx-catap/nginx/src/http/modules/ngx_http_range_filter_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_range_filter_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_range_filter_module.c
+@@ -68,12 +68,15 @@ static ngx_int_t ngx_http_range_not_sati
+ static ngx_int_t ngx_http_range_test_overlapped(ngx_http_request_t *r,
+     ngx_http_range_filter_ctx_t *ctx, ngx_chain_t *in);
+ static ngx_int_t ngx_http_range_singlepart_body(ngx_http_request_t *r,
+-    ngx_http_range_filter_ctx_t *ctx, ngx_chain_t *in);
++    ngx_http_range_filter_ctx_t *ctx, ngx_chain_t *in,
++    ngx_http_output_body_filter_pt ngx_http_next_body_filter);
+ static ngx_int_t ngx_http_range_multipart_body(ngx_http_request_t *r,
+-    ngx_http_range_filter_ctx_t *ctx, ngx_chain_t *in);
++    ngx_http_range_filter_ctx_t *ctx, ngx_chain_t *in,
++    ngx_http_output_body_filter_pt ngx_http_next_body_filter);
+ 
+ static ngx_int_t ngx_http_range_header_filter_init(ngx_conf_t *cf);
+ static ngx_int_t ngx_http_range_body_filter_init(ngx_conf_t *cf);
++static ngx_int_t ngx_http_range_late_filter_init(ngx_conf_t *cf);
+ 
+ 
+ static ngx_http_module_t  ngx_http_range_header_filter_module_ctx = {
+@@ -138,8 +141,40 @@ ngx_module_t  ngx_http_range_body_filter
+ };
+ 
+ 
++static ngx_http_module_t  ngx_http_range_late_filter_module_ctx = {
++    NULL,                                  /* preconfiguration */
++    ngx_http_range_late_filter_init,       /* postconfiguration */
++
++    NULL,                                  /* create main configuration */
++    NULL,                                  /* init main configuration */
++
++    NULL,                                  /* create server configuration */
++    NULL,                                  /* merge server configuration */
++
++    NULL,                                  /* create location configuration */
++    NULL,                                  /* merge location configuration */
++};
++
++
++ngx_module_t  ngx_http_range_late_filter_module = {
++    NGX_MODULE_V1,
++    &ngx_http_range_late_filter_module_ctx, /* module context */
++    NULL,                                  /* module directives */
++    NGX_HTTP_MODULE,                       /* module type */
++    NULL,                                  /* init master */
++    NULL,                                  /* init module */
++    NULL,                                  /* init process */
++    NULL,                                  /* init thread */
++    NULL,                                  /* exit thread */
++    NULL,                                  /* exit process */
++    NULL,                                  /* exit master */
++    NGX_MODULE_V1_PADDING
++};
++
++
+ static ngx_http_output_header_filter_pt  ngx_http_next_header_filter;
+-static ngx_http_output_body_filter_pt    ngx_http_next_body_filter;
++static ngx_http_output_body_filter_pt    ngx_http_next_body_early_filter;
++static ngx_http_output_body_filter_pt    ngx_http_next_body_late_filter;
+ 
+ 
+ static ngx_int_t
+@@ -564,7 +599,8 @@ ngx_http_range_not_satisfiable(ngx_http_
+ 
+ 
+ static ngx_int_t
+-ngx_http_range_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
++ngx_http_range_body_generic_filter(ngx_http_request_t *r, ngx_chain_t *in,
++    ngx_http_output_body_filter_pt ngx_http_next_body_filter)
+ {
+     ngx_http_range_filter_ctx_t  *ctx;
+ 
+@@ -579,7 +615,8 @@ ngx_http_range_body_filter(ngx_http_requ
+     }
+ 
+     if (ctx->ranges.nelts == 1) {
+-        return ngx_http_range_singlepart_body(r, ctx, in);
++        return ngx_http_range_singlepart_body(r, ctx, in,
++                                              ngx_http_next_body_filter);
+     }
+ 
+     /*
+@@ -594,7 +631,8 @@ ngx_http_range_body_filter(ngx_http_requ
+         return NGX_ERROR;
+     }
+ 
+-    return ngx_http_range_multipart_body(r, ctx, in);
++    return ngx_http_range_multipart_body(r, ctx, in,
++                                         ngx_http_next_body_filter);
+ }
+ 
+ 
+@@ -647,7 +685,8 @@ overlapped:
+ 
+ static ngx_int_t
+ ngx_http_range_singlepart_body(ngx_http_request_t *r,
+-    ngx_http_range_filter_ctx_t *ctx, ngx_chain_t *in)
++    ngx_http_range_filter_ctx_t *ctx, ngx_chain_t *in,
++    ngx_http_output_body_filter_pt ngx_http_next_body_filter)
+ {
+     off_t              start, last;
+     ngx_buf_t         *buf;
+@@ -733,7 +772,8 @@ ngx_http_range_singlepart_body(ngx_http_
+ 
+ static ngx_int_t
+ ngx_http_range_multipart_body(ngx_http_request_t *r,
+-    ngx_http_range_filter_ctx_t *ctx, ngx_chain_t *in)
++    ngx_http_range_filter_ctx_t *ctx, ngx_chain_t *in,
++    ngx_http_output_body_filter_pt ngx_http_next_body_filter)
+ {
+     off_t              body_start;
+     ngx_buf_t         *b, *buf;
+@@ -869,6 +909,30 @@ ngx_http_range_multipart_body(ngx_http_r
+ 
+ 
+ static ngx_int_t
++ngx_http_range_body_early_filter(ngx_http_request_t *r, ngx_chain_t *in)
++{
++    if (!r->allow_ranges || r->late_ranges) {
++        return ngx_http_next_body_early_filter(r, in);
++    }
++
++    return ngx_http_range_body_generic_filter(r, in,
++                                              ngx_http_next_body_early_filter);
++}
++
++
++static ngx_int_t
++ngx_http_range_body_late_filter(ngx_http_request_t *r, ngx_chain_t *in)
++{
++    if (!r->allow_ranges || !r->late_ranges) {
++        return ngx_http_next_body_late_filter(r, in);
++    }
++
++    return ngx_http_range_body_generic_filter(r, in,
++                                              ngx_http_next_body_late_filter);
++}
++
++
++static ngx_int_t
+ ngx_http_range_header_filter_init(ngx_conf_t *cf)
+ {
+     ngx_http_next_header_filter = ngx_http_top_header_filter;
+@@ -881,8 +945,18 @@ ngx_http_range_header_filter_init(ngx_co
+ static ngx_int_t
+ ngx_http_range_body_filter_init(ngx_conf_t *cf)
+ {
+-    ngx_http_next_body_filter = ngx_http_top_body_filter;
+-    ngx_http_top_body_filter = ngx_http_range_body_filter;
++    ngx_http_next_body_early_filter = ngx_http_top_body_filter;
++    ngx_http_top_body_filter = ngx_http_range_body_early_filter;
++
++    return NGX_OK;
++}
++
++
++static ngx_int_t
++ngx_http_range_late_filter_init(ngx_conf_t *cf)
++{
++    ngx_http_next_body_late_filter = ngx_http_top_body_filter;
++    ngx_http_top_body_filter = ngx_http_range_body_late_filter;
+ 
+     return NGX_OK;
+ }
+Index: nginx-catap/nginx/src/http/ngx_http_request.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_request.h
++++ nginx-catap/nginx/src/http/ngx_http_request.h
+@@ -520,6 +520,7 @@ struct ngx_http_request_s {
+     unsigned                          filter_need_in_memory:1;
+     unsigned                          filter_need_temporary:1;
+     unsigned                          allow_ranges:1;
++    unsigned                          late_ranges:1;
+ 
+ #if (NGX_STAT_STUB) || (NGX_STATUS)
+     unsigned                          stat_reading:1;
+Index: nginx-catap/nginx/auto/modules
+===================================================================
+--- nginx-catap.orig/nginx/auto/modules
++++ nginx-catap/nginx/auto/modules
+@@ -126,6 +126,8 @@ if [ $HTTP_GZIP = YES ]; then
+     HTTP_SRCS="$HTTP_SRCS $HTTP_GZIP_SRCS"
+ fi
+ 
++HTTP_FILTER_MODULES="$HTTP_FILTER_MODULES $HTTP_RANGE_LATE_FILTER_MODULE"
++
+ if [ $HTTP_POSTPONE = YES ]; then
+     HTTP_FILTER_MODULES="$HTTP_FILTER_MODULES $HTTP_POSTPONE_FILTER_MODULE"
+     HTTP_SRCS="$HTTP_SRCS $HTTP_POSTPONE_FILTER_SRCS"
+Index: nginx-catap/nginx/auto/sources
+===================================================================
+--- nginx-catap.orig/nginx/auto/sources
++++ nginx-catap/nginx/auto/sources
+@@ -271,6 +271,7 @@ HTTP_HEADERS_FILTER_MODULE=ngx_http_head
+ 
+ HTTP_RANGE_HEADER_FILTER_MODULE=ngx_http_range_header_filter_module
+ HTTP_RANGE_BODY_FILTER_MODULE=ngx_http_range_body_filter_module
++HTTP_RANGE_LATE_FILTER_MODULE=ngx_http_range_late_filter_module
+ 
+ HTTP_NOT_MODIFIED_FILTER_MODULE=ngx_http_not_modified_filter_module
+ 
