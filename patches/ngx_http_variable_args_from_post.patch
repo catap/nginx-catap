@@ -109,12 +109,12 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
  #if (NGX_HTTP_GZIP)
  
      ngx_conf_merge_value(conf->gzip_vary, prev->gzip_vary, 0);
-@@ -3707,10 +3749,46 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
+@@ -3707,10 +3749,50 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
      }
  #endif
  
 +    ngx_conf_merge_uint_value(conf->use_args_from_post, prev->use_args_from_post,
-+                              NGX_HTTP_USE_ARGS_FROM_POST_LAST);
++                              NGX_HTTP_USE_ARGS_FROM_POST_OFF);
 +
      return NGX_CONF_OK;
  }
@@ -139,6 +139,10 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 +
 +    if (!r->headers_in.content_length_n || r->request_body) {
 +        return NGX_DECLINED;
++    }
++
++    if (r->request_body) {
++        return NGX_OK;
 +    }
 +
 +    r->request_body_in_single_buf = 1;
