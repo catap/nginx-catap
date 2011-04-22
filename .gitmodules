@@ -55,3 +55,6 @@
 [submodule "modules/nginx-udplog-module"]
 	path = modules/nginx-udplog-module
 	url = git://github.com/catap/nginx-udplog-module.git
+[submodule "modules/nginx-upload-progress-module"]
+	path = modules/nginx-upload-progress-module
+	url = git://github.com/catap/nginx-upload-progress-module.git
