@@ -457,11 +457,10 @@ Index: nginx-catap/nginx/src/core/ngx_cycle.c
      if (ngx_conf_param(&conf) != NGX_CONF_OK) {
          environ = senv;
          ngx_destroy_cycle_pools(&conf);
-@@ -847,6 +861,8 @@ ngx_destroy_cycle_pools(ngx_conf_t *conf
+@@ -847,6 +861,7 @@ ngx_destroy_cycle_pools(ngx_conf_t *conf
  {
      ngx_destroy_pool(conf->temp_pool);
      ngx_destroy_pool(conf->pool);
-+    ngx_destroy_pool(conf->cycle->pool);
 +    ngx_destroy_pool(conf->cycle->dump_pool);
  }
  
