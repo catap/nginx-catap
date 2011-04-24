@@ -54,3 +54,4 @@ ngx_allocs.patch
 mdounin_gzip-handle-empty-flush-buffers.patch
 ngx_dump_config.patch
 ngx_http_late_ranges.patch
+clang_support.patch

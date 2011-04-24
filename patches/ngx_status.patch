@@ -1617,7 +1617,7 @@ Index: nginx-catap/nginx/src/http/ngx_http.c
  };
  
  
-+ngx_inline ngx_int_t
++ngx_int_t
 +ngx_http_get_status_position(ngx_uint_t status)
 +{
 +    if (status >= NGX_HTTP_OK
@@ -1655,7 +1655,7 @@ Index: nginx-catap/nginx/src/http/ngx_http.c
 +}
 +
 +
-+ngx_inline ngx_str_t*
++ngx_str_t*
 +ngx_http_get_status(ngx_uint_t status)
 +{
 +    status = (ngx_uint_t)ngx_http_get_status_position(status);
@@ -1668,7 +1668,7 @@ Index: nginx-catap/nginx/src/http/ngx_http.c
 +}
 +
 +
-+ngx_inline ngx_int_t
++ngx_int_t
 +ngx_http_status_len()
 +{
 +    return sizeof(ngx_http_status);
@@ -1686,10 +1686,10 @@ Index: nginx-catap/nginx/src/http/ngx_http.h
      ngx_http_request_t  *current_request;
  };
  
-+ngx_inline ngx_int_t ngx_http_get_status_position(ngx_uint_t status);
-+ngx_inline ngx_int_t ngx_http_status_len();
++ngx_int_t ngx_http_get_status_position(ngx_uint_t status);
++ngx_int_t ngx_http_status_len();
 +
-+ngx_inline ngx_str_t* ngx_http_get_status(ngx_uint_t status);
++ngx_str_t* ngx_http_get_status(ngx_uint_t status);
  
  typedef struct {
      ngx_uint_t           code;
