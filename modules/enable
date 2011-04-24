@@ -16,3 +16,4 @@ nginx-mogilefs-module
 nginx-syslog-module
 nginx-udplog-module
 nginx-upload-progress-module
+lua-nginx-module

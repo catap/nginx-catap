@@ -58,3 +58,6 @@
 [submodule "modules/nginx-upload-progress-module"]
 	path = modules/nginx-upload-progress-module
 	url = git://github.com/catap/nginx-upload-progress-module.git
+[submodule "modules/lua-nginx-module"]
+	path = modules/lua-nginx-module
+	url = git://github.com/catap/lua-nginx-module.git
