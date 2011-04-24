@@ -2,8 +2,8 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_core_module.c
 +++ nginx-catap/nginx/src/http/ngx_http_core_module.c
-@@ -2438,6 +2438,16 @@ ngx_http_named_location(ngx_http_request
-     ngx_http_core_main_conf_t   *cmcf;
+@@ -2442,6 +2442,16 @@ ngx_http_named_location(ngx_http_request
+ #endif
  
      r->main->count++;
 +    r->uri_changes--;
