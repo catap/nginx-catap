@@ -2107,22 +2107,27 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
       */
  
      clcf->client_max_body_size = NGX_CONF_UNSET;
-@@ -3424,6 +3716,14 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
+@@ -3424,6 +3716,19 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
  #endif
  #endif
  
 +#if (NGX_STATUS)
 +    if (prev->request_counter) {
-+
 +        conf->request_counter = prev->request_counter;
++    }
++    if (prev->active_request_counter) {
++        conf->active_request_counter = prev->active_request_counter;
++    }
 +
++    if (prev->status_counters) {
++        conf->status_counters = prev->status_counters;
 +    }
 +#endif
 +
      return NGX_CONF_OK;
  }
  
-@@ -3448,6 +3748,10 @@ ngx_http_core_listen(ngx_conf_t *cf, ngx
+@@ -3448,6 +3753,10 @@ ngx_http_core_listen(ngx_conf_t *cf, ngx
      u.listen = 1;
      u.default_port = 80;
  
@@ -2133,7 +2138,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      if (ngx_parse_url(cf->pool, &u) != NGX_OK) {
          if (u.err) {
              ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-@@ -4521,6 +4825,75 @@ ngx_http_core_lowat_check(ngx_conf_t *cf
+@@ -4521,6 +4830,75 @@ ngx_http_core_lowat_check(ngx_conf_t *cf
  }
  
  
