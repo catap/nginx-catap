@@ -150,7 +150,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_range_filter_module.c
 +                        r->headers_out.etag_time,
 +                        r->headers_out.etag_uniq);
 +
-+	if (ngx_strncmp(r->headers_in.if_match->value.data, etag,
++	if (ngx_strncmp(r->headers_in.if_range->value.data, etag,
 +                        (ngx_uint_t)(etag - p) > r->headers_in.if_range->value.len ?
 +                        (ngx_uint_t)(etag - p) : r->headers_in.if_range->value.len)) {
              goto next_filter;
