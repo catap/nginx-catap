@@ -32,7 +32,7 @@ mdounin_drop-incorrect-special-case-for-return-204.patch
 mdounin_clear-old-Location-header.patch
 mdounin_better-handle-various-per-server-ssl-options-with-SNI.patch
 mdounin_better-handle-late-upstream-creation.patch
-mdounin_fix-predicate-testing.patch
+#mdounin_fix-predicate-testing.patch
 mdounin_fix-socket-leak-with-aio_sendfile-and-limit_rate.patch
 mdounin_correctly-handle-Content-Encoding-set-from-perl.patch
 mdounin_gzip-static-always.patch

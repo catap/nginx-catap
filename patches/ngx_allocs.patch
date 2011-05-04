@@ -50,7 +50,7 @@ Index: nginx-catap/nginx/auto/sources
 ===================================================================
 --- nginx-catap.orig/nginx/auto/sources
 +++ nginx-catap/nginx/auto/sources
-@@ -517,6 +517,10 @@ NGX_GOOGLE_PERFTOOLS_SRCS=src/misc/ngx_g
+@@ -520,6 +520,10 @@ NGX_GOOGLE_PERFTOOLS_SRCS=src/misc/ngx_g
  
  NGX_CPP_TEST_SRCS=src/misc/ngx_cpp_test_module.cpp
  

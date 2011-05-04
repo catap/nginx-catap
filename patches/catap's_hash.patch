@@ -2,7 +2,7 @@ Index: nginx-catap/nginx/src/core/ngx_core.h
 ===================================================================
 --- nginx-catap.orig/nginx/src/core/ngx_core.h
 +++ nginx-catap/nginx/src/core/ngx_core.h
-@@ -76,6 +76,9 @@ typedef void (*ngx_connection_handler_pt
+@@ -77,6 +77,9 @@ typedef void (*ngx_connection_handler_pt
  #include <ngx_open_file_cache.h>
  #include <ngx_os.h>
  #include <ngx_connection.h>
@@ -16,9 +16,9 @@ Index: nginx-catap/nginx/auto/sources
 ===================================================================
 --- nginx-catap.orig/nginx/auto/sources
 +++ nginx-catap/nginx/auto/sources
-@@ -23,8 +23,11 @@ CORE_DEPS="src/core/nginx.h \
-            src/core/ngx_crc.h \
+@@ -24,8 +24,11 @@ CORE_DEPS="src/core/nginx.h \
             src/core/ngx_crc32.h \
+            src/core/ngx_murmurhash.h \
             src/core/ngx_md5.h \
 +           src/core/ngx_lookup3.h \
             src/core/ngx_sha1.h \
@@ -28,10 +28,10 @@ Index: nginx-catap/nginx/auto/sources
             src/core/ngx_radix_tree.h \
             src/core/ngx_slab.h \
             src/core/ngx_times.h \
-@@ -50,7 +53,10 @@ CORE_SRCS="src/core/nginx.c \
-            src/core/ngx_inet.c \
-            src/core/ngx_file.c \
+@@ -53,7 +56,10 @@ CORE_SRCS="src/core/nginx.c \
             src/core/ngx_crc32.c \
+            src/core/ngx_murmurhash.c \
+            src/core/ngx_md5.c \
 +           src/core/ngx_lookup3.c \
             src/core/ngx_rbtree.c \
 +           src/core/ngx_rbtreehash.c \

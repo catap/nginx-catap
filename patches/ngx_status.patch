@@ -78,7 +78,7 @@ Index: nginx-catap/nginx/auto/sources
 ===================================================================
 --- nginx-catap.orig/nginx/auto/sources
 +++ nginx-catap/nginx/auto/sources
-@@ -506,3 +506,13 @@ NGX_GOOGLE_PERFTOOLS_MODULE=ngx_google_p
+@@ -509,3 +509,13 @@ NGX_GOOGLE_PERFTOOLS_MODULE=ngx_google_p
  NGX_GOOGLE_PERFTOOLS_SRCS=src/misc/ngx_google_perftools_module.c
  
  NGX_CPP_TEST_SRCS=src/misc/ngx_cpp_test_module.cpp
@@ -96,7 +96,7 @@ Index: nginx-catap/nginx/src/core/ngx_core.h
 ===================================================================
 --- nginx-catap.orig/nginx/src/core/ngx_core.h
 +++ nginx-catap/nginx/src/core/ngx_core.h
-@@ -76,7 +76,9 @@ typedef void (*ngx_connection_handler_pt
+@@ -77,7 +77,9 @@ typedef void (*ngx_connection_handler_pt
  #include <ngx_open_file_cache.h>
  #include <ngx_os.h>
  #include <ngx_connection.h>

@@ -109,7 +109,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
  #if (NGX_HTTP_GZIP)
  
      ngx_conf_merge_value(conf->gzip_vary, prev->gzip_vary, 0);
-@@ -3732,10 +3774,50 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
+@@ -3737,10 +3779,50 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
      }
  #endif
  

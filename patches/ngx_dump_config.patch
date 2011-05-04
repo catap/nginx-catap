@@ -489,7 +489,7 @@ Index: nginx-catap/nginx/src/os/unix/ngx_files.h
 ===================================================================
 --- nginx-catap.orig/nginx/src/os/unix/ngx_files.h
 +++ nginx-catap/nginx/src/os/unix/ngx_files.h
-@@ -324,6 +324,8 @@ size_t ngx_fs_bsize(u_char *name);
+@@ -325,6 +325,8 @@ size_t ngx_fs_bsize(u_char *name);
  #define ngx_set_stderr(fd)       dup2(fd, STDERR_FILENO)
  #define ngx_set_stderr_n         "dup2(STDERR_FILENO)"
  

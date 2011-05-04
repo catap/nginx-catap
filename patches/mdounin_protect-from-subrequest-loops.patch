@@ -3,8 +3,8 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 --- nginx-catap.orig/nginx/src/http/ngx_http_core_module.c
 +++ nginx-catap/nginx/src/http/ngx_http_core_module.c
 @@ -2354,7 +2354,6 @@ ngx_http_subrequest(ngx_http_request_t *
-     r->start_sec = tp->sec;
-     r->start_msec = tp->msec;
+     sr->start_sec = tp->sec;
+     sr->start_msec = tp->msec;
  
 -    r->main->subrequests++;
      r->main->count++;
