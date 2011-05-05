@@ -9,7 +9,7 @@ make apply
 pushd nginx > /dev/null
 ./configure \
     --builddir=${DIR}/objs \
-    $(cat ${DIR}/modules/enable | \
+    $(cat ${DIR}/modules/enable | grep -v '^#' | \
     while read module; do echo "--add-module=${DIR}/modules/$module"; done) \
     $@
 popd > /dev/null
