@@ -43,8 +43,8 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 +    { ngx_string("use_args_from_post"),
 +      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
 +      ngx_conf_set_enum_slot,
-+      NGX_HTTP_LOC_CONF_OFFSET,
-+      offsetof(ngx_http_core_loc_conf_t, use_args_from_post),
++      NGX_HTTP_SRV_CONF_OFFSET,
++      offsetof(ngx_http_core_srv_conf_t, use_args_from_post),
 +      &ngx_http_use_args_from_post },
 +
 +
@@ -84,24 +84,27 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
  
  static void *
  ngx_http_core_create_main_conf(ngx_conf_t *cf)
-@@ -3357,6 +3395,7 @@ ngx_http_core_merge_srv_conf(ngx_conf_t 
+@@ -3284,6 +3322,8 @@ ngx_http_core_create_srv_conf(ngx_conf_t
+     cscf->merge_slashes = NGX_CONF_UNSET;
+     cscf->underscores_in_headers = NGX_CONF_UNSET;
+ 
++    cscf->use_args_from_post = NGX_CONF_UNSET;
++
+     return cscf;
+ }
+ 
+@@ -3357,6 +3397,10 @@ ngx_http_core_merge_srv_conf(ngx_conf_t 
          return NGX_CONF_ERROR;
      }
  
 +
++    ngx_conf_merge_uint_value(conf->use_args_from_post, prev->use_args_from_post,
++                              NGX_HTTP_USE_ARGS_FROM_POST_OFF);
++
      return NGX_CONF_OK;
  }
  
-@@ -3452,6 +3491,8 @@ ngx_http_core_create_loc_conf(ngx_conf_t
- #endif
- #endif
- 
-+    clcf->use_args_from_post = NGX_CONF_UNSET;
-+
-     return clcf;
- }
- 
-@@ -3696,6 +3737,7 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
+@@ -3696,6 +3740,7 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
  
      ngx_conf_merge_sec_value(conf->open_file_cache_events,
                                prev->open_file_cache_events, 0);
@@ -109,14 +112,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
  #if (NGX_HTTP_GZIP)
  
      ngx_conf_merge_value(conf->gzip_vary, prev->gzip_vary, 0);
-@@ -3737,10 +3779,50 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
-     }
- #endif
- 
-+    ngx_conf_merge_uint_value(conf->use_args_from_post, prev->use_args_from_post,
-+                              NGX_HTTP_USE_ARGS_FROM_POST_OFF);
-+
-     return NGX_CONF_OK;
+@@ -3741,6 +3786,39 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
  }
  
  
@@ -125,11 +121,11 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 +{
 +    ngx_int_t rc;
 +
-+    ngx_http_core_loc_conf_t   *clcf;
++    ngx_http_core_srv_conf_t   *cscf;
 +
-+    clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
++    cscf = ngx_http_get_module_srv_conf(r, ngx_http_core_module);
 +
-+    if (clcf->use_args_from_post == NGX_HTTP_USE_ARGS_FROM_POST_OFF) {
++    if (cscf->use_args_from_post == NGX_HTTP_USE_ARGS_FROM_POST_OFF) {
 +        return NGX_DECLINED;
 +    }
 +
@@ -137,12 +133,8 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 +        return NGX_DECLINED;
 +    }
 +
-+    if (!r->headers_in.content_length_n || r->request_body) {
++    if ((!r->headers_in.content_length_n && !r->chunked) || r->request_body) {
 +        return NGX_DECLINED;
-+    }
-+
-+    if (r->request_body) {
-+        return NGX_OK;
 +    }
 +
 +    r->request_body_in_single_buf = 1;
@@ -178,15 +170,15 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.h
  
  #define NGX_HTTP_KEEPALIVE_DISABLE_NONE    0x0002
  #define NGX_HTTP_KEEPALIVE_DISABLE_MSIE6   0x0004
-@@ -423,6 +430,8 @@ struct ngx_http_core_loc_conf_s {
-     ngx_status_counter_t **status_counters;
+@@ -194,6 +201,8 @@ typedef struct {
+     unsigned                    captures:1;
  #endif
  
-+    ngx_uint_t    use_args_from_post;
++    ngx_uint_t                  use_args_from_post;
 +
- #if 0
-     ngx_http_core_loc_conf_t  *prev_location;
- #endif
+     ngx_http_core_loc_conf_t  **named_locations;
+ 
+ #if (NGX_STATUS)
 Index: nginx-catap/nginx/src/http/ngx_http_parse.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_parse.c
@@ -241,9 +233,9 @@ Index: nginx-catap/nginx/src/http/ngx_http_parse.c
 +    ngx_int_t  rc;
 +    ngx_str_t  post;
 +
-+    ngx_http_core_loc_conf_t  *clcf;
++    ngx_http_core_srv_conf_t  *cscf;
 +
-+    clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
++    cscf = ngx_http_get_module_srv_conf(r, ngx_http_core_module);
 +
 +    /* r->main because all subrequests is GET */
 +    if (r->main->method == NGX_HTTP_POST &&
@@ -255,7 +247,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_parse.c
 +    }
 +
 +    if (post.len &&
-+        clcf->use_args_from_post == NGX_HTTP_USE_ARGS_FROM_POST_FIRST) {
++        cscf->use_args_from_post == NGX_HTTP_USE_ARGS_FROM_POST_FIRST) {
 +        rc = ngx_http_find_arg(&post, name, len, value);
 +        if (rc != NGX_DECLINED) {
 +            return rc;
@@ -268,7 +260,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_parse.c
 +    }
 +
 +    if (post.len &&
-+        clcf->use_args_from_post == NGX_HTTP_USE_ARGS_FROM_POST_LAST) {
++        cscf->use_args_from_post == NGX_HTTP_USE_ARGS_FROM_POST_LAST) {
 +        rc = ngx_http_find_arg(&post, name, len, value);
 +        if (rc != NGX_DECLINED) {
 +            return rc;

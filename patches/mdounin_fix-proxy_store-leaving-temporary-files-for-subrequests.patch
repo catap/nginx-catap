@@ -2,7 +2,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_upstream.c
 +++ nginx-catap/nginx/src/http/ngx_http_upstream.c
-@@ -2770,7 +2770,6 @@ ngx_http_upstream_process_upstream(ngx_h
+@@ -2771,7 +2771,6 @@ ngx_http_upstream_process_upstream(ngx_h
  static void
  ngx_http_upstream_process_request(ngx_http_request_t *r)
  {
@@ -10,7 +10,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
      ngx_temp_file_t      *tf;
      ngx_event_pipe_t     *p;
      ngx_http_upstream_t  *u;
-@@ -2782,30 +2781,16 @@ ngx_http_upstream_process_request(ngx_ht
+@@ -2783,30 +2782,16 @@ ngx_http_upstream_process_request(ngx_ht
  
          if (u->store) {
  
@@ -44,7 +44,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
                  }
              }
          }
-@@ -3147,6 +3132,18 @@ ngx_http_upstream_finalize_request(ngx_h
+@@ -3148,6 +3133,18 @@ ngx_http_upstream_finalize_request(ngx_h
                         u->pipe->temp_file->file.fd);
      }
  

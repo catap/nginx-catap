@@ -156,7 +156,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
          ngx_int_t  rc;
  
          rc = ngx_http_upstream_cache(r, u);
-@@ -734,9 +734,12 @@ ngx_http_upstream_cache(ngx_http_request
+@@ -735,9 +735,12 @@ ngx_http_upstream_cache(ngx_http_request
  
          c = r->cache;
  
@@ -170,7 +170,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
  
          u->cache_status = NGX_HTTP_CACHE_MISS;
      }
-@@ -2203,9 +2206,13 @@ ngx_http_upstream_send_response(ngx_http
+@@ -2204,9 +2207,13 @@ ngx_http_upstream_send_response(ngx_http
  
              /* TODO: add keys */
  
@@ -185,7 +185,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
  
              if (ngx_http_file_cache_create(r) != NGX_OK) {
                  ngx_http_upstream_finalize_request(r, u, 0);
-@@ -4403,7 +4410,7 @@ ngx_http_upstream_hide_headers_hash(ngx_
+@@ -4404,7 +4411,7 @@ ngx_http_upstream_hide_headers_hash(ngx_
  
          if (conf->hide_headers_hash.buckets
  #if (NGX_HTTP_CACHE)
