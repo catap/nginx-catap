@@ -9,10 +9,11 @@ chdir("nginx");
 
 my @args = ("--builddir=${dir}/objs");
 
-open(MODULES, "${dir}/modules/enable");
-my @modules = map {"--add-module=\"${dir}/modules/$_\""} grep {/^#/} <MODULES>;
+open(MODULES, "<${dir}/modules/enable") || die $!;
+my @modules = map {"--add-module=${dir}/modules/$_"} grep {/^[^#]*/} <MODULES>;
 close(MODULES);
 
 @args = (@args, @modules, @ARGV);
+
 
 system("./configure", @args);
