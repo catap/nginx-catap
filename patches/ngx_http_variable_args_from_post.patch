@@ -112,7 +112,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
  #if (NGX_HTTP_GZIP)
  
      ngx_conf_merge_value(conf->gzip_vary, prev->gzip_vary, 0);
-@@ -3741,6 +3786,39 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
+@@ -3741,6 +3786,40 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
  }
  
  
@@ -133,18 +133,19 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 +        return NGX_DECLINED;
 +    }
 +
-+    if ((!r->headers_in.content_length_n && !r->chunked) || r->request_body) {
++    if (!r->headers_in.content_length_n && !r->chunked) {
 +        return NGX_DECLINED;
++    }
++
++    if (r->request_body) {
++        return NGX_OK;
 +    }
 +
 +    r->request_body_in_single_buf = 1;
 +
 +    rc = ngx_http_read_client_request_body(r, ngx_http_core_run_phases);
 +
-+    if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
-+        return rc;
-+    }
-+
++    ngx_http_finalize_request(r, rc);
 +    return NGX_DONE;
 +}
 +
