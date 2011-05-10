@@ -21,29 +21,36 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
      conf->upstream.cache_min_uses = NGX_CONF_UNSET_UINT;
      conf->upstream.cache_bypass = NGX_CONF_UNSET_PTR;
      conf->upstream.no_cache = NGX_CONF_UNSET_PTR;
-@@ -1719,6 +1720,7 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
+@@ -1725,6 +1726,10 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
+     ngx_http_proxy_redirect_t  *pr;
+     ngx_http_script_compile_t   sc;
  
-     u_char                     *p;
-     size_t                      size;
++#if (NGX_HTTP_CACHE)
 +    ngx_uint_t                  i;
-     ngx_keyval_t               *s;
-     ngx_hash_init_t             hash;
-     ngx_http_core_loc_conf_t   *clcf;
-@@ -1878,19 +1880,27 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
++#endif
++
+     if (conf->upstream.store != 0) {
+         ngx_conf_merge_value(conf->upstream.store,
+                               prev->upstream.store, 0);
+@@ -1878,19 +1883,27 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
  
  #if (NGX_HTTP_CACHE)
  
 -    ngx_conf_merge_ptr_value(conf->upstream.cache,
 -                              prev->upstream.cache, NULL);
+-
+-    if (conf->upstream.cache && conf->upstream.cache->data == NULL) {
+-        ngx_shm_zone_t  *shm_zone;
 +    ngx_conf_merge_ptr_value(conf->upstream.caches,
 +                              prev->upstream.caches, NULL);
  
--    if (conf->upstream.cache && conf->upstream.cache->data == NULL) {
--        ngx_shm_zone_t  *shm_zone;
+-        shm_zone = conf->upstream.cache;
 +    ngx_conf_merge_uint_value(conf->upstream.ncaches,
 +                              prev->upstream.ncaches, 0);
  
--        shm_zone = conf->upstream.cache;
+-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+-                           "\"proxy_cache\" zone \"%V\" is unknown",
+-                           &shm_zone->shm.name);
 +    if (conf->upstream.caches) {
 +        for (i = 0; i < conf->upstream.ncaches; i++) {
 +            if (conf->upstream.caches[i] &&
@@ -56,10 +63,6 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
 +                                   "\"proxy_cache\" zone \"%V\" is unknown",
 +                                   &shm_zone->shm.name);
  
--        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
--                           "\"proxy_cache\" zone \"%V\" is unknown",
--                           &shm_zone->shm.name);
--
 -        return NGX_CONF_ERROR;
 +                return NGX_CONF_ERROR;
 +            }
@@ -67,7 +70,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
      }
  
      ngx_conf_merge_uint_value(conf->upstream.cache_min_uses,
-@@ -2115,7 +2125,7 @@ ngx_http_proxy_merge_headers(ngx_conf_t 
+@@ -2115,7 +2128,7 @@ ngx_http_proxy_merge_headers(ngx_conf_t 
  
      if (conf->headers_set_hash.buckets
  #if (NGX_HTTP_CACHE)
@@ -76,7 +79,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
  #endif
         )
      {
-@@ -2152,8 +2162,8 @@ ngx_http_proxy_merge_headers(ngx_conf_t 
+@@ -2152,8 +2165,8 @@ ngx_http_proxy_merge_headers(ngx_conf_t 
  
  #if (NGX_HTTP_CACHE)
  
@@ -87,7 +90,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
  #else
  
      h = ngx_http_proxy_headers;
-@@ -2612,8 +2622,8 @@ ngx_http_proxy_store(ngx_conf_t *cf, ngx
+@@ -2612,8 +2625,8 @@ ngx_http_proxy_store(ngx_conf_t *cf, ngx
  
  #if (NGX_HTTP_CACHE)
  
@@ -98,7 +101,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
      {
          return "is incompatible with \"proxy_cache\"";
      }
-@@ -2654,15 +2664,16 @@ ngx_http_proxy_cache(ngx_conf_t *cf, ngx
+@@ -2654,15 +2667,16 @@ ngx_http_proxy_cache(ngx_conf_t *cf, ngx
      ngx_http_proxy_loc_conf_t *plcf = conf;
  
      ngx_str_t  *value;
@@ -117,7 +120,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
          return NGX_CONF_OK;
      }
  
-@@ -2670,12 +2681,22 @@ ngx_http_proxy_cache(ngx_conf_t *cf, ngx
+@@ -2670,12 +2684,22 @@ ngx_http_proxy_cache(ngx_conf_t *cf, ngx
          return "is incompatible with \"proxy_store\"";
      }
  

@@ -152,7 +152,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
       *
       *     conf->method = NULL;
       *     conf->headers_source = NULL;
-@@ -1966,6 +2074,16 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
+@@ -1969,6 +2077,16 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
  
      ngx_conf_merge_value(conf->redirect, prev->redirect, 1);
  
