@@ -1,17 +1,18 @@
-#!/bin/bash -e
+#!/usr/bin/perl -w
 
-pushd $(dirname $0) > /dev/null
+use Cwd;
+my $dir = getcwd;
 
-DIR=$(pwd)
+system("make", "apply");
 
-make apply
+chdir("nginx");
 
-pushd nginx > /dev/null
-./configure \
-    --builddir=${DIR}/objs \
-    $(cat ${DIR}/modules/enable | grep -v '^#' | \
-    while read module; do echo "--add-module=${DIR}/modules/$module"; done) \
-    $@
-popd > /dev/null
+my @args = ("--builddir=${dir}/objs");
 
-popd > /dev/null
+open(MODULES, "${dir}/modules/enable");
+my @modules = map {"--add-module=\"${dir}/modules/$_\""} grep {/^#/} <MODULES>;
+close(MODULES);
+
+@args = (@args, @modules, @ARGV);
+
+system("./configure", @args);
