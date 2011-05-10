@@ -510,7 +510,7 @@ Index: nginx-catap/nginx/src/event/ngx_event.c
  
      size += cl           /* ngx_stat_accepted */
             + cl          /* ngx_stat_handled */
-@@ -540,7 +540,7 @@ ngx_event_module_init(ngx_cycle_t *cycle
+@@ -541,7 +541,7 @@ ngx_event_module_init(ngx_cycle_t *cycle
  
      ngx_random_number = (tp->msec << 16) + ngx_pid;
  
