@@ -123,17 +123,3 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
      return NGX_CONF_OK;
  }
  
-Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
-===================================================================
---- nginx-catap.orig/nginx/src/http/ngx_http_upstream.c
-+++ nginx-catap/nginx/src/http/ngx_http_upstream.c
-@@ -531,7 +531,8 @@ ngx_http_upstream_init_request(ngx_http_
- 
-     u->store = (u->conf->store || u->conf->store_lengths);
- 
--    if (!u->store && !r->post_action && !u->conf->ignore_client_abort) {
-+    if (!u->store && !r->post_action && !u->conf->ignore_client_abort
-+        && !u->keepalive) {
-         r->read_event_handler = ngx_http_upstream_rd_check_broken_connection;
-         r->write_event_handler = ngx_http_upstream_wr_check_broken_connection;
-     }
