@@ -1,0 +1,4 @@
+Upstream: keepalive support in memcached and fastcgi.
+
+Currently dirty, but works (and passes all tests).
+

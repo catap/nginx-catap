@@ -1,0 +1,98 @@
+Index: nginx-catap/nginx/src/event/ngx_event_pipe.c
+===================================================================
+--- nginx-catap.orig/nginx/src/event/ngx_event_pipe.c
++++ nginx-catap/nginx/src/event/ngx_event_pipe.c
+@@ -335,22 +335,26 @@ ngx_event_pipe_read_upstream(ngx_event_p
+ 
+             if (n >= size) {
+                 cl->buf->last = cl->buf->end;
+-
+-                /* STUB */ cl->buf->num = p->num++;
+-
+-                if (p->input_filter(p, cl->buf) == NGX_ERROR) {
+-                    return NGX_ABORT;
+-                }
+-
+                 n -= size;
+-                ln = cl;
+-                cl = cl->next;
+-                ngx_free_chain(p->pool, ln);
+ 
+             } else {
+                 cl->buf->last += n;
+                 n = 0;
++
++                if (cl->buf->last - cl->buf->pos < p->length) {
++                    continue;
++                }
++            }
++
++            /* STUB */ cl->buf->num = p->num++;
++
++            if (p->input_filter(p, cl->buf) == NGX_ERROR) {
++                return NGX_ABORT;
+             }
++
++            ln = cl;
++            cl = cl->next;
++            ngx_free_chain(p->pool, ln);
+         }
+ 
+         if (cl) {
+@@ -417,6 +421,9 @@ flush:
+                        cl->buf->file_last - cl->buf->file_pos);
+     }
+ 
++    ngx_log_debug1(NGX_LOG_DEBUG_EVENT, p->log, 0,
++                   "pipe length: %O", p->length);
++
+ #endif
+ 
+     if ((p->upstream_eof || p->upstream_error) && p->free_raw_bufs) {
+@@ -873,6 +880,16 @@ ngx_event_pipe_copy_input_filter(ngx_eve
+     }
+     p->last_in = &cl->next;
+ 
++    if (p->length == NGX_MAX_OFF_T_VALUE) {
++        return NGX_OK;
++    }
++
++    p->length -= b->last - b->pos;
++
++    if (p->length <= 0) {
++        p->upstream_done = 1;
++    }
++
+     return NGX_OK;
+ }
+ 
+Index: nginx-catap/nginx/src/event/ngx_event_pipe.h
+===================================================================
+--- nginx-catap.orig/nginx/src/event/ngx_event_pipe.h
++++ nginx-catap/nginx/src/event/ngx_event_pipe.h
+@@ -65,6 +65,7 @@ struct ngx_event_pipe_s {
+     ssize_t            busy_size;
+ 
+     off_t              read_length;
++    off_t              length;
+ 
+     off_t              max_temp_file_size;
+     ssize_t            temp_file_write_size;
+Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream.c
++++ nginx-catap/nginx/src/http/ngx_http_upstream.c
+@@ -2367,6 +2367,13 @@ ngx_http_upstream_send_response(ngx_http
+     p->pool = r->pool;
+     p->log = c->log;
+ 
++    if (r->headers_out.content_length_n != -1) {
++        p->length = r->headers_out.content_length_n;
++
++    } else {
++        p->length = NGX_MAX_OFF_T_VALUE;
++    }
++
+     p->cacheable = u->cacheable || u->store;
+ 
+     p->temp_file = ngx_pcalloc(r->pool, sizeof(ngx_temp_file_t));

@@ -1,0 +1,139 @@
+Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_proxy_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
+@@ -64,6 +64,8 @@ typedef struct {
+     ngx_str_t                      url;
+     ngx_uint_t                     version;
+ 
++    ngx_flag_t                     keepalive;
++
+ #if (NGX_HTTP_CACHE)
+     ngx_http_complex_value_t       cache_key;
+ #endif
+@@ -102,6 +104,9 @@ static ngx_int_t ngx_http_proxy_host_var
+ static ngx_int_t ngx_http_proxy_port_variable(ngx_http_request_t *r,
+     ngx_http_variable_value_t *v, uintptr_t data);
+ static ngx_int_t
++    ngx_http_proxy_connection_variable(ngx_http_request_t *r,
++    ngx_http_variable_value_t *v, uintptr_t data);
++static ngx_int_t
+     ngx_http_proxy_add_x_forwarded_for_variable(ngx_http_request_t *r,
+     ngx_http_variable_value_t *v, uintptr_t data);
+ static ngx_int_t
+@@ -349,6 +354,13 @@ static ngx_command_t  ngx_http_proxy_com
+       offsetof(ngx_http_proxy_loc_conf_t, upstream.busy_buffers_size_conf),
+       NULL },
+ 
++    { ngx_string("proxy_keepalive"),
++      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_FLAG,
++      ngx_conf_set_flag_slot,
++      NGX_HTTP_LOC_CONF_OFFSET,
++      offsetof(ngx_http_proxy_loc_conf_t, keepalive),
++      NULL },
++
+ #if (NGX_HTTP_CACHE)
+ 
+     { ngx_string("proxy_cache"),
+@@ -514,10 +526,12 @@ ngx_module_t  ngx_http_proxy_module = {
+ static char  ngx_http_proxy_version_10[] = " HTTP/1.0" CRLF;
+ static char  ngx_http_proxy_version_11[] = " HTTP/1.1" CRLF;
+ 
++static char  ngx_http_proxy_connection_close[] = "close";
++static char  ngx_http_proxy_connection_keepalive[] = "keepalive";
+ 
+ static ngx_keyval_t  ngx_http_proxy_headers[] = {
+     { ngx_string("Host"), ngx_string("$proxy_host") },
+-    { ngx_string("Connection"), ngx_string("close") },
++    { ngx_string("Connection"), ngx_string("$proxy_connection") },
+     { ngx_string("Keep-Alive"), ngx_string("") },
+     { ngx_string("Expect"), ngx_string("") },
+     { ngx_null_string, ngx_null_string }
+@@ -541,7 +555,7 @@ static ngx_str_t  ngx_http_proxy_hide_he
+ 
+ static ngx_keyval_t  ngx_http_proxy_cache_headers[] = {
+     { ngx_string("Host"), ngx_string("$proxy_host") },
+-    { ngx_string("Connection"), ngx_string("close") },
++    { ngx_string("Connection"), ngx_string("$proxy_connection") },
+     { ngx_string("Keep-Alive"), ngx_string("") },
+     { ngx_string("Expect"), ngx_string("") },
+     { ngx_string("If-Modified-Since"), ngx_string("") },
+@@ -564,6 +578,10 @@ static ngx_http_variable_t  ngx_http_pro
+     { ngx_string("proxy_port"), NULL, ngx_http_proxy_port_variable, 0,
+       NGX_HTTP_VAR_CHANGEABLE|NGX_HTTP_VAR_NOCACHEABLE|NGX_HTTP_VAR_NOHASH, 0 },
+ 
++    { ngx_string("proxy_connection"), NULL,
++      ngx_http_proxy_connection_variable, 0,
++      NGX_HTTP_VAR_CHANGEABLE|NGX_HTTP_VAR_NOCACHEABLE|NGX_HTTP_VAR_NOHASH, 0 },
++
+     { ngx_string("proxy_add_x_forwarded_for"), NULL,
+       ngx_http_proxy_add_x_forwarded_for_variable, 0, NGX_HTTP_VAR_NOHASH, 0 },
+ 
+@@ -649,6 +667,8 @@ ngx_http_proxy_handler(ngx_http_request_
+ 
+     u->accel = 1;
+ 
++    u->keepalive = plcf->keepalive;
++
+     rc = ngx_http_read_client_request_body(r, ngx_http_upstream_init);
+ 
+     if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
+@@ -1491,6 +1511,26 @@ ngx_http_proxy_port_variable(ngx_http_re
+ 
+ 
+ static ngx_int_t
++ngx_http_proxy_connection_variable(ngx_http_request_t *r,
++    ngx_http_variable_value_t *v, uintptr_t data)
++{
++    if (r->upstream->keepalive) {
++        v->len = sizeof(ngx_http_proxy_connection_keepalive) - 1;
++        v->data = (u_char *)ngx_http_proxy_connection_keepalive;
++    } else {
++        v->len = sizeof(ngx_http_proxy_connection_close) - 1;
++        v->data = (u_char *)ngx_http_proxy_connection_close;
++    }
++
++    v->valid = 1;
++    v->no_cacheable = 0;
++    v->not_found = 0;
++
++    return NGX_OK;
++}
++
++
++static ngx_int_t
+ ngx_http_proxy_add_x_forwarded_for_variable(ngx_http_request_t *r,
+     ngx_http_variable_value_t *v, uintptr_t data)
+ {
+@@ -1868,6 +1908,8 @@ ngx_http_proxy_create_loc_conf(ngx_conf_
+     conf->headers_hash_max_size = NGX_CONF_UNSET_UINT;
+     conf->headers_hash_bucket_size = NGX_CONF_UNSET_UINT;
+ 
++    conf->keepalive = NGX_CONF_UNSET;
++
+     return conf;
+ }
+ 
+@@ -2271,6 +2313,8 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
+         return NGX_CONF_ERROR;
+     }
+ 
++    ngx_conf_merge_value(conf->keepalive, prev->keepalive, 0);
++
+     return NGX_CONF_OK;
+ }
+ 
+Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream.c
++++ nginx-catap/nginx/src/http/ngx_http_upstream.c
+@@ -531,7 +531,8 @@ ngx_http_upstream_init_request(ngx_http_
+ 
+     u->store = (u->conf->store || u->conf->store_lengths);
+ 
+-    if (!u->store && !r->post_action && !u->conf->ignore_client_abort) {
++    if (!u->store && !r->post_action && !u->conf->ignore_client_abort
++        && !u->keepalive) {
+         r->read_event_handler = ngx_http_upstream_rd_check_broken_connection;
+         r->write_event_handler = ngx_http_upstream_wr_check_broken_connection;
+     }

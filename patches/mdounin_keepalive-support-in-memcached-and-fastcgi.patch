@@ -1,0 +1,190 @@
+Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_fastcgi_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
+@@ -77,6 +77,8 @@ typedef struct {
+ 
+ #define NGX_HTTP_FASTCGI_RESPONDER      1
+ 
++#define NGX_HTTP_FASTCGI_KEEP_CONN      1
++
+ #define NGX_HTTP_FASTCGI_BEGIN_REQUEST  1
+ #define NGX_HTTP_FASTCGI_ABORT_REQUEST  2
+ #define NGX_HTTP_FASTCGI_END_REQUEST    3
+@@ -484,7 +486,7 @@ static ngx_http_fastcgi_request_start_t 
+ 
+     { 0,                                               /* role_hi */
+       NGX_HTTP_FASTCGI_RESPONDER,                      /* role_lo */
+-      0, /* NGX_HTTP_FASTCGI_KEEP_CONN */              /* flags */
++      NGX_HTTP_FASTCGI_KEEP_CONN,                      /* flags */
+       { 0, 0, 0, 0, 0 } },                             /* reserved[5] */
+ 
+     { 1,                                               /* version */
+@@ -1531,6 +1533,7 @@ ngx_http_fastcgi_process_header(ngx_http
+         }
+ 
+         if (rc == NGX_HTTP_PARSE_HEADER_DONE) {
++            u->pipe->length = sizeof(ngx_http_fastcgi_header_t);
+             return NGX_OK;
+         }
+ 
+@@ -1603,7 +1606,10 @@ ngx_http_fastcgi_input_filter(ngx_event_
+ 
+             if (f->type == NGX_HTTP_FASTCGI_STDOUT && f->length == 0) {
+                 f->state = ngx_http_fastcgi_st_version;
++                /* XXX */
++#if 0
+                 p->upstream_done = 1;
++#endif
+ 
+                 ngx_log_debug0(NGX_LOG_DEBUG_HTTP, p->log, 0,
+                                "http fastcgi closed stdout");
+@@ -1614,6 +1620,7 @@ ngx_http_fastcgi_input_filter(ngx_event_
+             if (f->type == NGX_HTTP_FASTCGI_END_REQUEST) {
+                 f->state = ngx_http_fastcgi_st_version;
+                 p->upstream_done = 1;
++                r->upstream->keepalive = 1;
+ 
+                 ngx_log_debug0(NGX_LOG_DEBUG_HTTP, p->log, 0,
+                                "http fastcgi sent end request");
+@@ -1762,6 +1769,8 @@ ngx_http_fastcgi_input_filter(ngx_event_
+ 
+             b->last = f->last;
+ 
++            p->length = sizeof(ngx_http_fastcgi_header_t);
++
+             break;
+         }
+ 
+@@ -1769,6 +1778,9 @@ ngx_http_fastcgi_input_filter(ngx_event_
+ 
+         b->last = f->last;
+ 
++        /* XXX */
++        p->length = f->length;
++
+         break;
+ 
+     }
+Index: nginx-catap/nginx/src/http/modules/ngx_http_memcached_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_memcached_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_memcached_module.c
+@@ -411,6 +411,7 @@ found:
+ 
+         u->headers_in.status_n = 404;
+         u->state->status = 404;
++        u->keepalive = 1;
+ 
+         return NGX_OK;
+     }
+@@ -465,6 +466,8 @@ ngx_http_memcached_filter(void *data, ss
+             u->length = 0;
+             ctx->rest = 0;
+ 
++            u->keepalive = 0;
++
+             return NGX_OK;
+         }
+ 
+@@ -508,6 +511,9 @@ ngx_http_memcached_filter(void *data, ss
+     if (ngx_strncmp(last, ngx_http_memcached_end, b->last - last) != 0) {
+         ngx_log_error(NGX_LOG_ERR, ctx->request->connection->log, 0,
+                       "memcached sent invalid trailer");
++
++    } else {
++        u->keepalive = 1;
+     }
+ 
+     ctx->rest -= b->last - last;
+Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_proxy_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
+@@ -1398,6 +1398,15 @@ ngx_http_proxy_process_header(ngx_http_r
+                 h->lowcase_key = (u_char *) "date";
+             }
+ 
++            /* XXX */
++
++            if (r->headers_out.content_length_n != -1) {
++                r->upstream->pipe->length = r->headers_out.content_length_n;
++
++            } else {
++                r->upstream->pipe->length = NGX_MAX_OFF_T_VALUE;
++            }
++
+             return NGX_OK;
+         }
+ 
+Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream.c
++++ nginx-catap/nginx/src/http/ngx_http_upstream.c
+@@ -1609,6 +1609,8 @@ ngx_http_upstream_process_header(ngx_htt
+ 
+         rc = u->process_header(r);
+ 
++        /* XXX */
++
+         if (rc == NGX_AGAIN) {
+ 
+             if (u->buffer.pos == u->buffer.end) {
+@@ -2067,6 +2069,8 @@ ngx_http_upstream_process_headers(ngx_ht
+ 
+     u->headers_in.content_length_n = r->headers_out.content_length_n;
+ 
++    /* XXX */
++
+     if (r->headers_out.content_length_n != -1) {
+         u->length = (size_t) r->headers_out.content_length_n;
+ 
+@@ -2199,6 +2203,8 @@ ngx_http_upstream_send_response(ngx_http
+ 
+     if (!u->buffering) {
+ 
++        /* XXX */
++
+         if (u->input_filter == NULL) {
+             u->input_filter_init = ngx_http_upstream_non_buffered_filter_init;
+             u->input_filter = ngx_http_upstream_non_buffered_filter;
+@@ -2367,13 +2373,6 @@ ngx_http_upstream_send_response(ngx_http
+     p->pool = r->pool;
+     p->log = c->log;
+ 
+-    if (r->headers_out.content_length_n != -1) {
+-        p->length = r->headers_out.content_length_n;
+-
+-    } else {
+-        p->length = NGX_MAX_OFF_T_VALUE;
+-    }
+-
+     p->cacheable = u->cacheable || u->store;
+ 
+     p->temp_file = ngx_pcalloc(r->pool, sizeof(ngx_temp_file_t));
+Index: nginx-catap/nginx/src/http/ngx_http_upstream.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream.h
++++ nginx-catap/nginx/src/http/ngx_http_upstream.h
+@@ -334,6 +334,7 @@ struct ngx_http_upstream_s {
+ #endif
+ 
+     unsigned                         buffering:1;
++    unsigned                         keepalive:1;
+ 
+     unsigned                         request_sent:1;
+     unsigned                         header_sent:1;
+Index: nginx-catap/nginx/src/http/ngx_http.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http.h
++++ nginx-catap/nginx/src/http/ngx_http.h
+@@ -44,6 +44,9 @@ typedef u_char *(*ngx_http_log_handler_p
+ #endif
+ 
+ 
++#define NGX_UPSTREAM_KEEPALIVE_PATCHED 1
++
++
+ struct ngx_http_log_ctx_s {
+     ngx_connection_t    *connection;
+     ngx_http_request_t  *request;

@@ -55,3 +55,8 @@ mdounin_gzip-handle-empty-flush-buffers.patch
 ngx_dump_config.patch
 ngx_http_late_ranges.patch
 clang_support.patch
+ngx_http_proxy_version.patch
+#mdounin_flush-partially-filled-buffers-on-upstream-timeout.patch
+mdounin_dont-wait-for-upstream-close-if-we-know-length.patch
+mdounin_keepalive-support-in-memcached-and-fastcgi.patch
+ngx_http_proxy_keepalive.patch

@@ -1,0 +1,113 @@
+Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_proxy_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
+@@ -62,6 +62,7 @@ typedef struct {
+     ngx_str_t                      method;
+     ngx_str_t                      location;
+     ngx_str_t                      url;
++    ngx_uint_t                     version;
+ 
+ #if (NGX_HTTP_CACHE)
+     ngx_http_complex_value_t       cache_key;
+@@ -166,6 +167,14 @@ static ngx_conf_bitmask_t  ngx_http_prox
+     { ngx_null_string, 0 }
+ };
+ 
++static ngx_conf_enum_t ngx_http_proxy_version[] = {
++    { ngx_string("1.0"), 10 },
++    { ngx_string("1.1"), 11 },
++    { ngx_string("HTTP/1.0"), 10 },
++    { ngx_string("HTTP/1.1"), 11 },
++    { ngx_null_string, 0 }
++};
++
+ 
+ ngx_module_t  ngx_http_proxy_module;
+ 
+@@ -284,6 +293,13 @@ static ngx_command_t  ngx_http_proxy_com
+       offsetof(ngx_http_proxy_loc_conf_t, body_source),
+       NULL },
+ 
++    { ngx_string("proxy_version"),
++      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
++      ngx_conf_set_enum_slot,
++      NGX_HTTP_LOC_CONF_OFFSET,
++      offsetof(ngx_http_proxy_loc_conf_t, version),
++      &ngx_http_proxy_version },
++
+     { ngx_string("proxy_method"),
+       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+       ngx_conf_set_str_slot,
+@@ -495,7 +511,8 @@ ngx_module_t  ngx_http_proxy_module = {
+ };
+ 
+ 
+-static char  ngx_http_proxy_version[] = " HTTP/1.0" CRLF;
++static char  ngx_http_proxy_version_10[] = " HTTP/1.0" CRLF;
++static char  ngx_http_proxy_version_11[] = " HTTP/1.1" CRLF;
+ 
+ 
+ static ngx_keyval_t  ngx_http_proxy_headers[] = {
+@@ -882,7 +899,19 @@ ngx_http_proxy_create_request(ngx_http_r
+         method.len++;
+     }
+ 
+-    len = method.len + sizeof(ngx_http_proxy_version) - 1 + sizeof(CRLF) - 1;
++    len = method.len + sizeof(CRLF) - 1;
++    switch (plcf->version) {
++    case 10:
++        len += sizeof(ngx_http_proxy_version_10) - 1;
++        break;
++
++    case 11:
++        len += sizeof(ngx_http_proxy_version_11) - 1;
++        break;
++
++    default:
++	return NGX_HTTP_INTERNAL_SERVER_ERROR;
++    }
+ 
+     escape = 0;
+     loc_len = 0;
+@@ -1025,8 +1054,20 @@ ngx_http_proxy_create_request(ngx_http_r
+ 
+     u->uri.len = b->last - u->uri.data;
+ 
+-    b->last = ngx_cpymem(b->last, ngx_http_proxy_version,
+-                         sizeof(ngx_http_proxy_version) - 1);
++    switch (plcf->version) {
++    case 10:
++        b->last = ngx_cpymem(b->last, ngx_http_proxy_version_10,
++                             sizeof(ngx_http_proxy_version_10) - 1);
++        break;
++
++    case 11:
++        b->last = ngx_cpymem(b->last, ngx_http_proxy_version_11,
++                             sizeof(ngx_http_proxy_version_11) - 1);
++        break;
++
++    default:
++	return NGX_HTTP_INTERNAL_SERVER_ERROR;
++    }
+ 
+     ngx_memzero(&e, sizeof(ngx_http_script_engine_t));
+ 
+@@ -1813,6 +1854,8 @@ ngx_http_proxy_create_loc_conf(ngx_conf_
+     conf->redirect = NGX_CONF_UNSET;
+     conf->upstream.change_buffering = 1;
+ 
++    conf->version = NGX_CONF_UNSET_UINT;
++
+     conf->headers_hash_max_size = NGX_CONF_UNSET_UINT;
+     conf->headers_hash_bucket_size = NGX_CONF_UNSET_UINT;
+ 
+@@ -2054,6 +2097,8 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
+ 
+ #endif
+ 
++    ngx_conf_merge_uint_value(conf->version, prev->version, 10);
++
+     if (conf->method.len == 0) {
+         conf->method = prev->method;
+ 

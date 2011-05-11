@@ -1,0 +1,15 @@
+Upstream: don't wait for upstream close if we know length.
+
+This change basically deligates right to control how many bytes may be
+buffered by ngx_event_pipe to input filter by means of changing p->length.
+
+Currently p->length is set to NGX_MAX_OFF_T_VALUE if content length isn't
+known (and thus input must be terminated by upstream connection close), or
+to content length if it's known.
+
+Futher improvement may involve correct parsing of chunked transfer encoding -
+by setting p->length in input filter as approprate.  E.g. set it to 2 if you
+just parsed chunk end and expect other chunk to start (chunk takes at least
+3 bytes, "0" CRLF, but RFC 2616 recomends to be tolerant and recognize bare
+LF too).
+
