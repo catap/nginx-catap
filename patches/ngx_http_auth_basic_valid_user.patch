@@ -2,7 +2,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_auth_basic_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/modules/ngx_http_auth_basic_module.c
 +++ nginx-catap/nginx/src/http/modules/ngx_http_auth_basic_module.c
-@@ -20,6 +20,10 @@ typedef struct {
+@@ -21,6 +21,10 @@ typedef struct {
  typedef struct {
      ngx_str_t                 realm;
      ngx_http_complex_value_t  user_file;
@@ -13,7 +13,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_auth_basic_module.c
  } ngx_http_auth_basic_loc_conf_t;
  
  
-@@ -36,6 +40,8 @@ static ngx_int_t ngx_http_auth_basic_ini
+@@ -37,6 +41,8 @@ static ngx_int_t ngx_http_auth_basic_ini
  static char *ngx_http_auth_basic(ngx_conf_t *cf, void *post, void *data);
  static char *ngx_http_auth_basic_user_file(ngx_conf_t *cf, ngx_command_t *cmd,
      void *conf);
@@ -22,7 +22,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_auth_basic_module.c
  
  
  static ngx_conf_post_handler_pt  ngx_http_auth_basic_p = ngx_http_auth_basic;
-@@ -58,6 +64,28 @@ static ngx_command_t  ngx_http_auth_basi
+@@ -59,6 +65,28 @@ static ngx_command_t  ngx_http_auth_basi
        offsetof(ngx_http_auth_basic_loc_conf_t, user_file),
        NULL },
  
@@ -51,7 +51,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_auth_basic_module.c
        ngx_null_command
  };
  
-@@ -284,8 +312,19 @@ static ngx_int_t
+@@ -285,8 +313,19 @@ static ngx_int_t
  ngx_http_auth_basic_crypt_handler(ngx_http_request_t *r,
      ngx_http_auth_basic_ctx_t *ctx, ngx_str_t *passwd, ngx_str_t *realm)
  {
@@ -73,7 +73,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_auth_basic_module.c
  
      rc = ngx_crypt(r->pool, r->headers_in.passwd.data, passwd->data,
                     &encrypted);
-@@ -374,6 +413,9 @@ ngx_http_auth_basic_create_loc_conf(ngx_
+@@ -375,6 +414,9 @@ ngx_http_auth_basic_create_loc_conf(ngx_
          return NULL;
      }
  
@@ -83,7 +83,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_auth_basic_module.c
      return conf;
  }
  
-@@ -474,3 +516,59 @@ ngx_http_auth_basic_user_file(ngx_conf_t
+@@ -475,3 +517,59 @@ ngx_http_auth_basic_user_file(ngx_conf_t
  
      return NGX_CONF_OK;
  }

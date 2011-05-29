@@ -193,7 +193,7 @@ Index: nginx-catap/nginx/auto/sources
 ===================================================================
 --- nginx-catap.orig/nginx/auto/sources
 +++ nginx-catap/nginx/auto/sources
-@@ -274,6 +274,7 @@ HTTP_HEADERS_FILTER_MODULE=ngx_http_head
+@@ -276,6 +276,7 @@ HTTP_HEADERS_FILTER_MODULE=ngx_http_head
  
  HTTP_RANGE_HEADER_FILTER_MODULE=ngx_http_range_header_filter_module
  HTTP_RANGE_BODY_FILTER_MODULE=ngx_http_range_body_filter_module

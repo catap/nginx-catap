@@ -2,7 +2,7 @@ Index: nginx-catap/nginx/auto/modules
 ===================================================================
 --- nginx-catap.orig/nginx/auto/modules
 +++ nginx-catap/nginx/auto/modules
-@@ -467,6 +467,18 @@ if [ $NGX_STATUS = YES ]; then
+@@ -469,6 +469,18 @@ if [ $NGX_STATUS = YES ]; then
      CORE_DEPS="$CORE_DEPS $NGX_STATUS_DEPS"
  fi
  
@@ -50,7 +50,7 @@ Index: nginx-catap/nginx/auto/sources
 ===================================================================
 --- nginx-catap.orig/nginx/auto/sources
 +++ nginx-catap/nginx/auto/sources
-@@ -520,6 +520,10 @@ NGX_GOOGLE_PERFTOOLS_SRCS=src/misc/ngx_g
+@@ -522,6 +522,10 @@ NGX_GOOGLE_PERFTOOLS_SRCS=src/misc/ngx_g
  
  NGX_CPP_TEST_SRCS=src/misc/ngx_cpp_test_module.cpp
  

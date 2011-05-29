@@ -185,7 +185,7 @@ Index: nginx-catap/nginx/src/os/unix/ngx_user.c
  
  #include <ngx_config.h>
  #include <ngx_core.h>
-@@ -111,6 +115,133 @@ ngx_crypt(ngx_pool_t *pool, u_char *key,
+@@ -111,6 +115,133 @@ ngx_libc_crypt(ngx_pool_t *pool, u_char 
  #endif /* NGX_CRYPT */
  
  
@@ -335,7 +335,7 @@ Index: nginx-catap/nginx/src/os/unix/ngx_user.h
  typedef uid_t  ngx_uid_t;
  typedef gid_t  ngx_gid_t;
 @@ -19,6 +23,14 @@ typedef gid_t  ngx_gid_t;
- ngx_int_t ngx_crypt(ngx_pool_t *pool, u_char *key, u_char *salt,
+ ngx_int_t ngx_libc_crypt(ngx_pool_t *pool, u_char *key, u_char *salt,
      u_char **encrypted);
  
 +ngx_int_t ngx_switch_user(ngx_cycle_t *cycle);

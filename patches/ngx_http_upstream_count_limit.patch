@@ -90,7 +90,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
      if (ngx_event_flags & NGX_USE_CLEAR_EVENT) {
  
          if (!c->write->active) {
-@@ -4582,3 +4610,31 @@ ngx_http_upstream_init_main_conf(ngx_con
+@@ -4570,3 +4598,31 @@ ngx_http_upstream_init_main_conf(ngx_con
  
      return NGX_CONF_OK;
  }

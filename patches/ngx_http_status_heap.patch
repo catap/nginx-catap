@@ -2,7 +2,7 @@ Index: nginx-catap/nginx/auto/modules
 ===================================================================
 --- nginx-catap.orig/nginx/auto/modules
 +++ nginx-catap/nginx/auto/modules
-@@ -356,6 +356,11 @@ if [ $NGX_STATUS = YES ]; then
+@@ -358,6 +358,11 @@ if [ $NGX_STATUS = YES ]; then
      fi
  fi
  
@@ -46,7 +46,7 @@ Index: nginx-catap/nginx/auto/sources
 ===================================================================
 --- nginx-catap.orig/nginx/auto/sources
 +++ nginx-catap/nginx/auto/sources
-@@ -384,6 +384,10 @@ HTTP_STATUS_MODULE=ngx_http_status_modul
+@@ -386,6 +386,10 @@ HTTP_STATUS_MODULE=ngx_http_status_modul
  HTTP_STATUS_SRCS=src/http/modules/ngx_http_status_module.c
  
  

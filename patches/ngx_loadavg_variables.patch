@@ -171,7 +171,7 @@ Index: nginx-catap/nginx/src/os/unix/ngx_user.c
  
  /*
   * Solaris has thread-safe crypt()
-@@ -106,3 +109,32 @@ ngx_crypt(ngx_pool_t *pool, u_char *key,
+@@ -106,3 +109,32 @@ ngx_libc_crypt(ngx_pool_t *pool, u_char 
  #endif
  
  #endif /* NGX_CRYPT */
@@ -209,7 +209,7 @@ Index: nginx-catap/nginx/src/os/unix/ngx_user.h
 --- nginx-catap.orig/nginx/src/os/unix/ngx_user.h
 +++ nginx-catap/nginx/src/os/unix/ngx_user.h
 @@ -19,5 +19,6 @@ typedef gid_t  ngx_gid_t;
- ngx_int_t ngx_crypt(ngx_pool_t *pool, u_char *key, u_char *salt,
+ ngx_int_t ngx_libc_crypt(ngx_pool_t *pool, u_char *key, u_char *salt,
      u_char **encrypted);
  
 +ngx_int_t ngx_get_loadavg(ngx_uint_t n);

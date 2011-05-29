@@ -2,7 +2,7 @@ Index: nginx-catap/nginx/auto/modules
 ===================================================================
 --- nginx-catap.orig/nginx/auto/modules
 +++ nginx-catap/nginx/auto/modules
-@@ -343,6 +343,19 @@ if [ $HTTP_STUB_STATUS = YES ]; then
+@@ -345,6 +345,19 @@ if [ $HTTP_STUB_STATUS = YES ]; then
      HTTP_SRCS="$HTTP_SRCS src/http/modules/ngx_http_stub_status_module.c"
  fi
  
@@ -22,7 +22,7 @@ Index: nginx-catap/nginx/auto/modules
  #if [ -r $NGX_OBJS/auto ]; then
  #    . $NGX_OBJS/auto
  #fi
-@@ -442,6 +455,14 @@ if [ $NGX_CPP_TEST = YES ]; then
+@@ -444,6 +457,14 @@ if [ $NGX_CPP_TEST = YES ]; then
  fi
  
  
@@ -78,7 +78,7 @@ Index: nginx-catap/nginx/auto/sources
 ===================================================================
 --- nginx-catap.orig/nginx/auto/sources
 +++ nginx-catap/nginx/auto/sources
-@@ -509,3 +509,13 @@ NGX_GOOGLE_PERFTOOLS_MODULE=ngx_google_p
+@@ -511,3 +511,13 @@ NGX_GOOGLE_PERFTOOLS_MODULE=ngx_google_p
  NGX_GOOGLE_PERFTOOLS_SRCS=src/misc/ngx_google_perftools_module.c
  
  NGX_CPP_TEST_SRCS=src/misc/ngx_cpp_test_module.cpp
@@ -2915,7 +2915,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
      if (uscf->peer.init(r, uscf) != NGX_OK) {
          ngx_http_upstream_finalize_request(r, u,
                                             NGX_HTTP_INTERNAL_SERVER_ERROR);
-@@ -3969,7 +3998,6 @@ ngx_http_upstream(ngx_conf_t *cf, ngx_co
+@@ -3957,7 +3986,6 @@ ngx_http_upstream(ngx_conf_t *cf, ngx_co
          return NGX_CONF_ERROR;
      }
  
@@ -2923,7 +2923,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
      ctx = ngx_pcalloc(cf->pool, sizeof(ngx_http_conf_ctx_t));
      if (ctx == NULL) {
          return NGX_CONF_ERROR;
-@@ -4023,7 +4051,6 @@ ngx_http_upstream(ngx_conf_t *cf, ngx_co
+@@ -4011,7 +4039,6 @@ ngx_http_upstream(ngx_conf_t *cf, ngx_co
          }
      }
  
@@ -2931,7 +2931,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
      /* parse inside upstream{} */
  
      pcf = *cf;
-@@ -4444,6 +4471,37 @@ ngx_http_upstream_hide_headers_hash(ngx_
+@@ -4432,6 +4459,37 @@ ngx_http_upstream_hide_headers_hash(ngx_
  }
  
  

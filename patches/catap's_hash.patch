@@ -28,7 +28,7 @@ Index: nginx-catap/nginx/auto/sources
             src/core/ngx_radix_tree.h \
             src/core/ngx_slab.h \
             src/core/ngx_times.h \
-@@ -53,7 +56,10 @@ CORE_SRCS="src/core/nginx.c \
+@@ -54,7 +57,10 @@ CORE_SRCS="src/core/nginx.c \
             src/core/ngx_crc32.c \
             src/core/ngx_murmurhash.c \
             src/core/ngx_md5.c \
