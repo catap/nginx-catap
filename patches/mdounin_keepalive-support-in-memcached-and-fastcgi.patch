@@ -139,7 +139,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
      if (r->headers_out.content_length_n != -1) {
          u->length = (size_t) r->headers_out.content_length_n;
  
-@@ -2199,6 +2203,8 @@ ngx_http_upstream_send_response(ngx_http
+@@ -2208,6 +2212,8 @@ ngx_http_upstream_send_response(ngx_http
  
      if (!u->buffering) {
  
@@ -148,7 +148,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
          if (u->input_filter == NULL) {
              u->input_filter_init = ngx_http_upstream_non_buffered_filter_init;
              u->input_filter = ngx_http_upstream_non_buffered_filter;
-@@ -2355,13 +2361,6 @@ ngx_http_upstream_send_response(ngx_http
+@@ -2364,13 +2370,6 @@ ngx_http_upstream_send_response(ngx_http
      p->pool = r->pool;
      p->log = c->log;
  

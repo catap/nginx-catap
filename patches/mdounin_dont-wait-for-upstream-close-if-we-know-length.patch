@@ -82,7 +82,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_upstream.c
 +++ nginx-catap/nginx/src/http/ngx_http_upstream.c
-@@ -2355,6 +2355,13 @@ ngx_http_upstream_send_response(ngx_http
+@@ -2364,6 +2364,13 @@ ngx_http_upstream_send_response(ngx_http
      p->pool = r->pool;
      p->log = c->log;
  

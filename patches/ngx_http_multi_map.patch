@@ -43,7 +43,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_map_module.c
        ngx_http_map_block,
        NGX_HTTP_MAIN_CONF_OFFSET,
        0,
-@@ -117,7 +119,7 @@ ngx_http_map_variable(ngx_http_request_t
+@@ -116,7 +118,7 @@ ngx_http_map_variable(ngx_http_request_t
      ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                     "http map started");
  
@@ -52,7 +52,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_map_module.c
          return NGX_ERROR;
      }
  
-@@ -178,10 +180,12 @@ ngx_http_map_block(ngx_conf_t *cf, ngx_c
+@@ -175,10 +177,12 @@ ngx_http_map_block(ngx_conf_t *cf, ngx_c
      ngx_str_t                         *value, name;
      ngx_conf_t                         save;
      ngx_pool_t                        *pool;
@@ -65,7 +65,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_map_module.c
      ngx_http_compile_complex_value_t   ccv;
  
      if (mcf->hash_max_size == NGX_CONF_UNSET_UINT) {
-@@ -196,72 +200,110 @@ ngx_http_map_block(ngx_conf_t *cf, ngx_c
+@@ -193,72 +197,110 @@ ngx_http_map_block(ngx_conf_t *cf, ngx_c
                                            ngx_cacheline_size);
      }
  
@@ -214,7 +214,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_map_module.c
      ctx.cf = &save;
      ctx.hostnames = 0;
  
-@@ -280,76 +322,82 @@ ngx_http_map_block(ngx_conf_t *cf, ngx_c
+@@ -277,76 +319,82 @@ ngx_http_map_block(ngx_conf_t *cf, ngx_c
          return rv;
      }
  
@@ -346,7 +346,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_map_module.c
      ngx_destroy_pool(pool);
  
      return rv;
-@@ -373,7 +421,7 @@ ngx_http_map(ngx_conf_t *cf, ngx_command
+@@ -370,7 +418,7 @@ ngx_http_map(ngx_conf_t *cf, ngx_command
  {
      ngx_int_t                   rc, index;
      ngx_str_t                  *value, file, name;
@@ -355,7 +355,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_map_module.c
      ngx_http_map_conf_ctx_t    *ctx;
      ngx_http_variable_value_t  *var, **vp;
  
-@@ -387,7 +435,7 @@ ngx_http_map(ngx_conf_t *cf, ngx_command
+@@ -384,7 +432,7 @@ ngx_http_map(ngx_conf_t *cf, ngx_command
          ctx->hostnames = 1;
          return NGX_CONF_OK;
  
@@ -364,7 +364,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_map_module.c
          ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
                             "invalid number of the map parameters");
          return NGX_CONF_ERROR;
-@@ -405,167 +453,174 @@ ngx_http_map(ngx_conf_t *cf, ngx_command
+@@ -402,173 +450,180 @@ ngx_http_map(ngx_conf_t *cf, ngx_command
          return ngx_conf_parse(cf, &file);
      }
  
@@ -495,7 +495,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_map_module.c
              return NGX_CONF_ERROR;
          }
 -    }
- 
+-
 -    var = ngx_palloc(ctx->keys.pool, sizeof(ngx_http_variable_value_t));
 -    if (var == NULL) {
 -        return NGX_CONF_ERROR;
@@ -506,61 +506,71 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_map_module.c
 -    if (var->data == NULL) {
 -        return NGX_CONF_ERROR;
 -    }
+-
+-    var->valid = 1;
+-    var->no_cacheable = 0;
+-    var->not_found = 0;
+ 
+-    vp = ngx_array_push(&ctx->values_hash[key]);
+-    if (vp == NULL) {
+-        return NGX_CONF_ERROR;
+-    }
+-
+-    *vp = var;
+-
+-found:
 +        var->len = value[i + 1].len;
 +        var->data = ngx_pstrdup(ctx->keys[i].pool, &value[i + 1]);
 +        if (var->data == NULL) {
 +            return NGX_CONF_ERROR;
 +        }
  
--    var->valid = 1;
--    var->no_cacheable = 0;
--    var->not_found = 0;
+-    if (ngx_strcmp(value[0].data, "default") == 0) {
 +        var->valid = 1;
 +        var->no_cacheable = 0;
 +        var->not_found = 0;
  
--    vp = ngx_array_push(&ctx->values_hash[key]);
--    if (vp == NULL) {
--        return NGX_CONF_ERROR;
--    }
-+        vp = ngx_array_push(&ctx->values_hash[i][key]);
-+        if (vp == NULL) {
-+            return NGX_CONF_ERROR;
-+        }
- 
--    *vp = var;
-+        *vp = var;
- 
- found:
- 
--    if (ngx_strcmp(value[0].data, "default") == 0) {
-+        if (ngx_strcmp(value[0].data, "default") == 0) {
- 
 -        if (ctx->default_value) {
 -            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
 -                               "duplicate default map parameter");
--            return NGX_CONF_ERROR;
--        }
++        vp = ngx_array_push(&ctx->values_hash[i][key]);
++        if (vp == NULL) {
+             return NGX_CONF_ERROR;
+         }
+ 
+-        ctx->default_value = var;
++        *vp = var;
+ 
+-        return NGX_CONF_OK;
+-    }
++found:
+ 
+-#if (NGX_PCRE)
++        if (ngx_strcmp(value[0].data, "default") == 0) {
+ 
+-    if (value[0].len && value[0].data[0] == '~') {
+-        ngx_regex_compile_t    rc;
+-        ngx_http_map_regex_t  *regex;
+-        u_char                 errstr[NGX_MAX_CONF_ERRSTR];
 +            if (ctx->default_values[i]) {
 +                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
 +                                   "duplicate default map parameter");
 +                return NGX_CONF_ERROR;
 +            }
  
--        ctx->default_value = var;
+-        regex = ngx_array_push(&ctx->regexes);
+-        if (regex == NULL) {
+-            return NGX_CONF_ERROR;
 +            ctx->default_values[i] = var;
- 
--        return NGX_CONF_OK;
--    }
++
 +            continue;
-+        }
+         }
  
- #if (NGX_PCRE)
+-        value[0].len--;
+-        value[0].data++;
++#if (NGX_PCRE)
  
--    if (value[0].len && value[0].data[0] == '~') {
--        ngx_regex_compile_t    rc;
--        ngx_http_map_regex_t  *regex;
--        u_char                 errstr[NGX_MAX_CONF_ERRSTR];
+-        ngx_memzero(&rc, sizeof(ngx_regex_compile_t));
 +        if (value[0].len && value[0].data[0] == '~') {
 +            ngx_regex_compile_t    rc;
 +            ngx_http_map_regex_t  *regex;
@@ -571,18 +581,28 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_map_module.c
 +                return NGX_CONF_ERROR;
 +            }
  
--        regex = ngx_array_push(&ctx->regexes);
--        if (regex == NULL) {
--            return NGX_CONF_ERROR;
+-        if (value[0].data[0] == '*') {
+             value[0].len--;
+             value[0].data++;
+-            rc.options = NGX_REGEX_CASELESS;
 -        }
-+            value[0].len--;
-+            value[0].data++;
  
--        value[0].len--;
--        value[0].data++;
+-        rc.pattern = value[0];
+-        rc.err.len = NGX_MAX_CONF_ERRSTR;
+-        rc.err.data = errstr;
 +            ngx_memzero(&rc, sizeof(ngx_regex_compile_t));
  
--        ngx_memzero(&rc, sizeof(ngx_regex_compile_t));
+-        regex->regex = ngx_http_regex_compile(ctx->cf, &rc);
+-        if (regex->regex == NULL) {
+-            return NGX_CONF_ERROR;
+-        }
++            if (value[0].data[0] == '*') {
++                value[0].len--;
++                value[0].data++;
++                rc.options = NGX_REGEX_CASELESS;
++            }
+ 
+-        regex->value = var;
 +            rc.pattern = value[0];
 +            rc.err.len = NGX_MAX_CONF_ERRSTR;
 +            rc.err.data = errstr;
@@ -592,22 +612,13 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_map_module.c
 +                return NGX_CONF_ERROR;
 +            }
  
--        rc.pattern = value[0];
--        rc.err.len = NGX_MAX_CONF_ERRSTR;
--        rc.err.data = errstr;
-+            regex->value = var;
- 
--        regex->regex = ngx_http_regex_compile(ctx->cf, &rc);
--        if (regex->regex == NULL) {
--            return NGX_CONF_ERROR;
-+            return NGX_CONF_OK;
-         }
- 
--        regex->value = var;
--
 -        return NGX_CONF_OK;
 -    }
--
++            regex->value = var;
++
++            return NGX_CONF_OK;
++        }
+ 
  #endif
  
 -    if (value[0].len && value[0].data[0] == '\\') {

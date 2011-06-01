@@ -21,7 +21,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_variables.c
      { ngx_null_string, NULL, NULL, 0, 0, 0 }
  };
  
-@@ -1787,6 +1792,26 @@ ngx_http_regex_compile(ngx_conf_t *cf, n
+@@ -1803,6 +1808,26 @@ ngx_http_regex_compile(ngx_conf_t *cf, n
      return re;
  }
  

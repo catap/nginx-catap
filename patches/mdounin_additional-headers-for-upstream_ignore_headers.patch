@@ -12,7 +12,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
      { ngx_string("Expires"), NGX_HTTP_UPSTREAM_IGN_EXPIRES },
      { ngx_string("Cache-Control"), NGX_HTTP_UPSTREAM_IGN_CACHE_CONTROL },
      { ngx_string("Set-Cookie"), NGX_HTTP_UPSTREAM_IGN_SET_COOKIE },
-@@ -3403,9 +3406,15 @@ static ngx_int_t
+@@ -3412,9 +3415,15 @@ static ngx_int_t
  ngx_http_upstream_process_limit_rate(ngx_http_request_t *r, ngx_table_elt_t *h,
      ngx_uint_t offset)
  {
@@ -30,7 +30,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
  
      n = ngx_atoi(h->value.data, h->value.len);
  
-@@ -3421,16 +3430,23 @@ static ngx_int_t
+@@ -3430,16 +3439,23 @@ static ngx_int_t
  ngx_http_upstream_process_buffering(ngx_http_request_t *r, ngx_table_elt_t *h,
      ngx_uint_t offset)
  {
@@ -57,7 +57,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
              }
  
          } else if (h->value.len == 3) {
-@@ -3439,7 +3455,7 @@ ngx_http_upstream_process_buffering(ngx_
+@@ -3448,7 +3464,7 @@ ngx_http_upstream_process_buffering(ngx_
              c2 = ngx_tolower(h->value.data[2]);
  
              if (c0 == 'y' && c1 == 'e' && c2 == 's') {
@@ -66,7 +66,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
              }
          }
      }
-@@ -3452,6 +3468,10 @@ static ngx_int_t
+@@ -3461,6 +3477,10 @@ static ngx_int_t
  ngx_http_upstream_process_charset(ngx_http_request_t *r, ngx_table_elt_t *h,
      ngx_uint_t offset)
  {

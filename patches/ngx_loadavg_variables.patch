@@ -1,32 +1,3 @@
-Index: nginx-catap/nginx/auto/os/features
-===================================================================
---- nginx-catap.orig/nginx/auto/os/features
-+++ nginx-catap/nginx/auto/os/features
-@@ -361,3 +361,24 @@ END
-         fi
-     fi
- fi
-+
-+
-+ngx_feature="sysinfo()"
-+ngx_feature_name="NGX_HAVE_SYSINFO"
-+ngx_feature_run=no
-+ngx_feature_incs="#include <sys/sysinfo.h>"
-+ngx_feature_path=
-+ngx_feature_libs=
-+ngx_feature_test="struct sysinfo s;
-+                  sysinfo(&s);"
-+. auto/feature
-+
-+ngx_feature="getloadavg()"
-+ngx_feature_name="NGX_HAVE_GETLOADAVG"
-+ngx_feature_run=no
-+ngx_feature_incs="#include <stdlib.h>"
-+ngx_feature_path=
-+ngx_feature_libs=
-+ngx_feature_test="double loadavg[1];
-+                  getloadavg(loadavg, 1);"
-+. auto/feature
 Index: nginx-catap/nginx/src/http/ngx_http_variables.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_variables.c
@@ -69,7 +40,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_variables.c
      if (p == NULL) {
          return NGX_ERROR;
      }
-@@ -2086,6 +2101,87 @@ ngx_http_variable_mstimestamp(ngx_http_r
+@@ -2102,6 +2117,87 @@ ngx_http_variable_mstimestamp(ngx_http_r
  }
  
  
@@ -215,3 +186,33 @@ Index: nginx-catap/nginx/src/os/unix/ngx_user.h
 +ngx_int_t ngx_get_loadavg(ngx_uint_t n);
  
  #endif /* _NGX_USER_H_INCLUDED_ */
+Index: nginx-catap/nginx/auto/unix
+===================================================================
+--- nginx-catap.orig/nginx/auto/unix
++++ nginx-catap/nginx/auto/unix
+@@ -669,3 +669,25 @@ ngx_feature_path=
+ ngx_feature_libs=
+ ngx_feature_test="struct dirent  dir; dir.d_type = DT_REG"
+ . auto/feature
++
++
++ngx_feature="sysinfo()"
++ngx_feature_name="NGX_HAVE_SYSINFO"
++ngx_feature_run=no
++ngx_feature_incs="#include <sys/sysinfo.h>"
++ngx_feature_path=
++ngx_feature_libs=
++ngx_feature_test="struct sysinfo s;
++                  sysinfo(&s);"
++. auto/feature
++
++
++ngx_feature="getloadavg()"
++ngx_feature_name="NGX_HAVE_GETLOADAVG"
++ngx_feature_run=no
++ngx_feature_incs="#include <stdlib.h>"
++ngx_feature_path=
++ngx_feature_libs=
++ngx_feature_test="double loadavg[1];
++                  getloadavg(loadavg, 1);"
++. auto/feature

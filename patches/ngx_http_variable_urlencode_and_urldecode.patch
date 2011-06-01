@@ -143,7 +143,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_variables.c
  ngx_http_variable_argument(ngx_http_request_t *r, ngx_http_variable_value_t *v,
      uintptr_t data)
  {
-@@ -2349,6 +2469,20 @@ ngx_http_variables_init_vars(ngx_conf_t 
+@@ -2365,6 +2485,20 @@ ngx_http_variables_init_vars(ngx_conf_t 
          }
  #endif
  
