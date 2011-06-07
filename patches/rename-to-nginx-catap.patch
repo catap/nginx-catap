@@ -22,7 +22,7 @@ Index: nginx-catap/nginx/src/core/nginx.c
  
      if (ngx_show_version) {
 -        ngx_log_stderr(0, "nginx version: " NGINX_VER);
-+        ngx_log_stderr(0, "nginx-catap version: " NGINX_VER);
++        ngx_log_stderr(0, NGINX_NAME " version: " NGINX_VERSION);
  
          if (ngx_show_help) {
              ngx_log_stderr(0,
@@ -30,12 +30,18 @@ Index: nginx-catap/nginx/src/core/nginx.h
 ===================================================================
 --- nginx-catap.orig/nginx/src/core/nginx.h
 +++ nginx-catap/nginx/src/core/nginx.h
-@@ -10,7 +10,7 @@
+@@ -7,10 +7,13 @@
+ #ifndef _NGINX_H_INCLUDED_
+ #define _NGINX_H_INCLUDED_
+ 
++#ifndef NGINX_NAME
++#define NGINX_NAME         "nginx-catap"
++#endif
  
  #define nginx_version      1000004
  #define NGINX_VERSION      "1.0.4"
 -#define NGINX_VER          "nginx/" NGINX_VERSION
-+#define NGINX_VER          "nginx-catap/" NGINX_VERSION
++#define NGINX_VER          NGINX_NAME "/" NGINX_VERSION
  
  #define NGINX_VAR          "NGINX"
  #define NGX_OLDPID_EXT     ".oldbin"
@@ -169,3 +175,90 @@ Index: nginx-catap/nginx/configure
          have=NGX_PREFIX value="\"$NGX_PREFIX/\"" . auto/define
      ;;
  
+Index: nginx-catap/nginx/src/core/ngx_log.c
+===================================================================
+--- nginx-catap.orig/nginx/src/core/ngx_log.c
++++ nginx-catap/nginx/src/core/ngx_log.c
+@@ -150,7 +150,7 @@ ngx_log_error_core(ngx_uint_t level, ngx
+ 
+     msg -= (7 + err_levels[level].len + 3);
+ 
+-    (void) ngx_sprintf(msg, "nginx: [%V] ", &err_levels[level]);
++    (void) ngx_sprintf(msg, NGINX_NAME ": [%V] ", &err_levels[level]);
+ 
+     (void) ngx_write_console(ngx_stderr, msg, p - msg);
+ }
+@@ -209,9 +209,9 @@ ngx_log_stderr(ngx_err_t err, const char
+     u_char    errstr[NGX_MAX_ERROR_STR];
+ 
+     last = errstr + NGX_MAX_ERROR_STR;
+-    p = errstr + 7;
++    p = errstr + sizeof(NGINX_NAME ": ") - 1;
+ 
+-    ngx_memcpy(errstr, "nginx: ", 7);
++    ngx_memcpy(errstr, NGINX_NAME ": ", sizeof(NGINX_NAME ": ") - 1);
+ 
+     va_start(args, fmt);
+     p = ngx_vslprintf(p, last, fmt, args);
+Index: nginx-catap/nginx/src/http/modules/perl/ngx_http_perl_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/perl/ngx_http_perl_module.c
++++ nginx-catap/nginx/src/http/modules/perl/ngx_http_perl_module.c
+@@ -161,7 +161,7 @@ ngx_http_perl_xs_init(pTHX)
+ {
+     newXS("DynaLoader::boot_DynaLoader", boot_DynaLoader, __FILE__);
+ 
+-    nginx_stash = gv_stashpv("nginx", TRUE);
++    nginx_stash = gv_stashpv(NGINX_NAME, TRUE);
+ }
+ 
+ 
+@@ -591,7 +591,7 @@ ngx_http_perl_create_interpreter(ngx_con
+         }
+     }
+ 
+-    embedding[n++] = "-Mnginx";
++    embedding[n++] = "-M" NGINX_NAME;
+     embedding[n++] = "-e";
+     embedding[n++] = "0";
+ 
+@@ -602,12 +602,12 @@ ngx_http_perl_create_interpreter(ngx_con
+         goto fail;
+     }
+ 
+-    sv = get_sv("nginx::VERSION", FALSE);
++    sv = get_sv(NGINX_NAME "::VERSION", FALSE);
+     ver = SvPV(sv, len);
+ 
+     if (ngx_strcmp(ver, NGINX_VERSION) != 0) {
+         ngx_log_error(NGX_LOG_ALERT, cf->log, 0,
+-                      "version " NGINX_VERSION " of nginx.pm is required, "
++                      "version " NGINX_VERSION " of " NGINX_NAME ".pm is required, "
+                       "but %s was found", ver);
+         goto fail;
+     }
+Index: nginx-catap/nginx/src/os/unix/ngx_setproctitle.c
+===================================================================
+--- nginx-catap.orig/nginx/src/os/unix/ngx_setproctitle.c
++++ nginx-catap/nginx/src/os/unix/ngx_setproctitle.c
+@@ -88,7 +88,7 @@ ngx_setproctitle(char *title)
+ 
+     ngx_os_argv[1] = NULL;
+ 
+-    p = ngx_cpystrn((u_char *) ngx_os_argv[0], (u_char *) "nginx: ",
++    p = ngx_cpystrn((u_char *) ngx_os_argv[0], (u_char *) NGINX_NAME ": ",
+                     ngx_os_argv_last - ngx_os_argv[0]);
+ 
+     p = ngx_cpystrn(p, (u_char *) title, ngx_os_argv_last - (char *) p);
+Index: nginx-catap/nginx/src/core/ngx_core.h
+===================================================================
+--- nginx-catap.orig/nginx/src/core/ngx_core.h
++++ nginx-catap/nginx/src/core/ngx_core.h
+@@ -35,6 +35,7 @@ typedef void (*ngx_connection_handler_pt
+ #define  NGX_ABORT      -6
+ 
+ 
++#include <nginx.h>
+ #include <ngx_errno.h>
+ #include <ngx_atomic.h>
+ #include <ngx_thread.h>
