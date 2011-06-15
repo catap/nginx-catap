@@ -1,19 +1,26 @@
-#!/usr/bin/perl -w
+#!/usr/bin/perl
+    eval 'exec /usr/bin/perl -S $0 ${1+"$@"}'
+        if $running_under_some_shell;
+#!/usr/local/bin/perl
+
+use strict;
 
 use Cwd;
 my $dir = getcwd;
 
 system("make", "apply");
 
-chdir("nginx");
+chdir("$dir/nginx");
 
-my @args = ("--builddir=${dir}/objs");
+my @args = ("--builddir=../objs");
 
-open(MODULES, "<${dir}/modules/enable") || die $!;
-my @modules = map {"--add-module=${dir}/modules/$_"} grep {/^[^#]+/} <MODULES>;
+open(MODULES, "<../modules/enable") || die $!;
+my @modules = map {"--add-module=../modules/$_"} grep {/^[^#]+/} <MODULES>;
 close(MODULES);
 
-@args = (@args, @modules, @ARGV);
+my @fixed_path = map {my $arg = $_; $arg =~ s!../!../../!; $arg} @ARGV;
+
+@args = (@args, @modules, @fixed_path);
 
 
 system("./configure", @args);
