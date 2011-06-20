@@ -1,0 +1,107 @@
+Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/ngx_http_fastcgi_module.c
++++ nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
+@@ -693,11 +693,12 @@ ngx_http_fastcgi_create_request(ngx_http
+     u_char                        ch, *pos, *lowcase_key;
+     size_t                        size, len, key_len, val_len, padding,
+                                   allocated;
+-    ngx_uint_t                    i, n, next, hash, header_params;
++    uintptr_t                    *ignored, m;
++    ngx_uint_t                    i, n, k, next, hash;
+     ngx_buf_t                    *b;
+     ngx_chain_t                  *cl, *body;
+     ngx_list_part_t              *part;
+-    ngx_table_elt_t              *header, **ignored;
++    ngx_table_elt_t              *header;
+     ngx_http_script_code_pt       code;
+     ngx_http_script_engine_t      e, le;
+     ngx_http_fastcgi_header_t    *h;
+@@ -705,7 +706,6 @@ ngx_http_fastcgi_create_request(ngx_http
+     ngx_http_script_len_code_pt   lcode;
+ 
+     len = 0;
+-    header_params = 0;
+     ignored = NULL;
+ 
+     flcf = ngx_http_get_module_loc_conf(r, ngx_http_fastcgi_module);
+@@ -739,7 +739,17 @@ ngx_http_fastcgi_create_request(ngx_http
+         lowcase_key = NULL;
+ 
+         if (flcf->header_params) {
+-            ignored = ngx_palloc(r->pool, flcf->header_params * sizeof(void *));
++            part = &r->headers_in.headers.part;
++            k = 0;
++
++            while (part) {
++                k += part->nelts;
++                part = part->next;
++            }
++
++            n = (k + (8 * sizeof(uintptr_t) - 1)) / (8 * sizeof(uintptr_t));
++
++            ignored = ngx_pcalloc(r->pool, n * sizeof(uintptr_t));
+             if (ignored == NULL) {
+                 return NGX_ERROR;
+             }
+@@ -747,6 +757,7 @@ ngx_http_fastcgi_create_request(ngx_http
+ 
+         part = &r->headers_in.headers.part;
+         header = part->elts;
++        k = 0;
+ 
+         for (i = 0; /* void */; i++) {
+ 
+@@ -786,10 +797,16 @@ ngx_http_fastcgi_create_request(ngx_http
+                 }
+ 
+                 if (ngx_hash_find(&flcf->headers_hash, hash, lowcase_key, n)) {
+-                    ignored[header_params++] = &header[i];
++                    n = k / (8 * sizeof(uintptr_t));
++                    m = (uintptr_t) 1 << k % (8 * sizeof(uintptr_t));
++
++                    ignored[n] |= m;
++
++                    k++;
+                     continue;
+                 }
+ 
++                k++;
+                 n += sizeof("HTTP_") - 1;
+ 
+             } else {
+@@ -904,6 +921,7 @@ ngx_http_fastcgi_create_request(ngx_http
+ 
+         part = &r->headers_in.headers.part;
+         header = part->elts;
++        k = 0;
+ 
+         for (i = 0; /* void */; i++) {
+ 
+@@ -917,9 +935,13 @@ ngx_http_fastcgi_create_request(ngx_http
+                 i = 0;
+             }
+ 
+-            for (n = 0; n < header_params; n++) {
+-                if (&header[i] == ignored[n]) {
+-                    goto next;
++            if (flcf->header_params) {
++                n = k / (8 * sizeof(uintptr_t));
++                m = (uintptr_t) 1 << k % (8 * sizeof(uintptr_t));
++                k++;
++
++                if (ignored[n] & m) {
++                    continue;
+                 }
+             }
+ 
+@@ -966,9 +988,6 @@ ngx_http_fastcgi_create_request(ngx_http
+                            "fastcgi param: \"%*s: %*s\"",
+                            key_len, b->last - (key_len + val_len),
+                            val_len, b->last - val_len);
+-        next:
+-
+-            continue;
+         }
+     }
+ 
