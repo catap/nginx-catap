@@ -12,7 +12,7 @@ system("make", "apply");
 
 chdir("$dir/nginx");
 
-my @args = ("--builddir=../objs");
+my @args = ("--builddir=$dir/objs");
 
 open(MODULES, "<../modules/enable") || die $!;
 my @modules = map {"--add-module=../modules/$_"} grep {/^[^#]+/} <MODULES>;
