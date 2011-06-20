@@ -18,7 +18,7 @@ open(MODULES, "<../modules/enable") || die $!;
 my @modules = map {"--add-module=../modules/$_"} grep {/^[^#]+/} <MODULES>;
 close(MODULES);
 
-my @fixed_path = map {my $arg = $_; $arg =~ s!../!../../!; $arg} @ARGV;
+my @fixed_path = map {my $arg = $_; $arg =~ s!\.\./!\.\./\.\./!; $arg} @ARGV;
 
 @args = (@args, @modules, @fixed_path);
 
