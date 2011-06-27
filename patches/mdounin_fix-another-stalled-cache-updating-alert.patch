@@ -17,3 +17,30 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
              ngx_http_upstream_finalize_request(r, u, rc);
              return;
          }
+@@ -3150,16 +3142,19 @@ ngx_http_upstream_finalize_request(ngx_h
+ 
+ #if (NGX_HTTP_CACHE)
+ 
+-    if (u->cacheable && r->cache) {
+-        time_t  valid;
++    if (r->cache) {
+ 
+-        if (rc == NGX_HTTP_BAD_GATEWAY || rc == NGX_HTTP_GATEWAY_TIME_OUT) {
++        if (u->cacheable) {
++            time_t  valid;
+ 
+-            valid = ngx_http_file_cache_valid(u->conf->cache_valid, rc);
++            if (rc == NGX_HTTP_BAD_GATEWAY || rc == NGX_HTTP_GATEWAY_TIME_OUT) {
+ 
+-            if (valid) {
+-                r->cache->valid_sec = ngx_time() + valid;
+-                r->cache->error = rc;
++                valid = ngx_http_file_cache_valid(u->conf->cache_valid, rc);
++
++                if (valid) {
++                    r->cache->valid_sec = ngx_time() + valid;
++                    r->cache->error = rc;
++                }
+             }
+         }
+ 

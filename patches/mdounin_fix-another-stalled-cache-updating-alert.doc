@@ -1,0 +1,11 @@
+Cache: fix another "stalled cache updating" alert.
+
+The one reported at [1] happens if client closes prematurely connection
+before response header was got from upstream and response isn't cacheable.
+
+As such situations are expected to happen on other errors too, teach
+ngx_http_upstream_finalize_request() to free cache in such situations.
+This is consistent with behaviour for cacheable responses.
+
+[1] http://www.nginx.org/pipermail/nginx/2011-June/027522.html
+
