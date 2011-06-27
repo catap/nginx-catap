@@ -1,0 +1,8 @@
+Bugfix: https wasn't working on systems with 32-bit off_t.
+
+Due to off_t being signed NGX_MAX_UINT32_VALUE will overflow off_t while
+calculating limit in ngx_ssl_send_chain() on systems with 32-bit off_t,
+and as a result ngx_ssl_send_chain() won't be able to send anything.
+
+Introduce NGX_MAX_INT32_VALUE and use it there instead.
+

@@ -1,0 +1,21 @@
+Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream.c
++++ nginx-catap/nginx/src/http/ngx_http_upstream.c
+@@ -2479,7 +2479,7 @@ ngx_http_upstream_process_non_buffered_d
+     if (wev->timedout) {
+         c->timedout = 1;
+         ngx_connection_error(c, NGX_ETIMEDOUT, "client timed out");
+-        ngx_http_upstream_finalize_request(r, u, 0);
++        ngx_http_upstream_finalize_request(r, u, NGX_HTTP_REQUEST_TIME_OUT);
+         return;
+     }
+ 
+@@ -3169,6 +3169,7 @@ ngx_http_upstream_finalize_request(ngx_h
+ #endif
+ 
+     if (u->header_sent
++        && rc != NGX_HTTP_REQUEST_TIME_OUT
+         && (rc == NGX_ERROR || rc >= NGX_HTTP_SPECIAL_RESPONSE))
+     {
+         rc = 0;

@@ -1,0 +1,19 @@
+Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http_upstream.c
++++ nginx-catap/nginx/src/http/ngx_http_upstream.c
+@@ -2188,14 +2188,6 @@ ngx_http_upstream_send_response(ngx_http
+ 
+         } else {
+ 
+-#if (NGX_HTTP_CACHE)
+-
+-            if (r->cache) {
+-                ngx_http_file_cache_free(r->cache, u->pipe->temp_file);
+-            }
+-
+-#endif
+-
+             ngx_http_upstream_finalize_request(r, u, rc);
+             return;
+         }

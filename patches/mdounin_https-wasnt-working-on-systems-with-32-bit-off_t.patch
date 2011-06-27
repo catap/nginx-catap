@@ -1,0 +1,29 @@
+Index: nginx-catap/nginx/src/core/ngx_config.h
+===================================================================
+--- nginx-catap.orig/nginx/src/core/ngx_config.h
++++ nginx-catap/nginx/src/core/ngx_config.h
+@@ -127,5 +127,6 @@ typedef intptr_t        ngx_flag_t;
+ #define NGX_MAX_UINT32_VALUE  (uint32_t) 0xffffffff
+ #endif
+ 
++#define NGX_MAX_INT32_VALUE   (int32_t) 2147483647
+ 
+ #endif /* _NGX_CONFIG_H_INCLUDED_ */
+Index: nginx-catap/nginx/src/event/ngx_event_openssl.c
+===================================================================
+--- nginx-catap.orig/nginx/src/event/ngx_event_openssl.c
++++ nginx-catap/nginx/src/event/ngx_event_openssl.c
+@@ -957,10 +957,10 @@ ngx_ssl_send_chain(ngx_connection_t *c, 
+     }
+ 
+ 
+-    /* the maximum limit size is the maximum uint32_t value - the page size */
++    /* the maximum limit size is the maximum int32_t value - the page size */
+ 
+-    if (limit == 0 || limit > (off_t) (NGX_MAX_UINT32_VALUE - ngx_pagesize)) {
+-        limit = NGX_MAX_UINT32_VALUE - ngx_pagesize;
++    if (limit == 0 || limit > (off_t) (NGX_MAX_INT32_VALUE - ngx_pagesize)) {
++        limit = NGX_MAX_INT32_VALUE - ngx_pagesize;
+     }
+ 
+     buf = c->ssl->buf;

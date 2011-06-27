@@ -1,0 +1,10 @@
+Upstream: fix request finalization if client timed out.
+
+Finalizing with rc = 0 caused nginx to wait for another send_timeout before
+actually closing client's connection if client timed out while still talking
+to upstream server.  So preserve rc on NGX_HTTP_REQUEST_TIME_OUT.
+
+See here for details:
+
+http://nginx.org/pipermail/nginx/2011-May/026867.html
+

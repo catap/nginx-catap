@@ -1,0 +1,9 @@
+Upstream: properly allocate memory for tried flags.
+
+Previous allocation only took into account number of non-backup servers, and
+this caused memory corruption with many backup servers.
+
+See report here:
+
+http://nginx.org/pipermail/nginx/2011-May/026531.html
+
