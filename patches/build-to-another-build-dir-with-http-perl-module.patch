@@ -1,0 +1,58 @@
+Index: nginx-catap/nginx/auto/options
+===================================================================
+--- nginx-catap.orig/nginx/auto/options
++++ nginx-catap/nginx/auto/options
+@@ -17,6 +17,7 @@ NGX_GROUP=
+ CC=${CC:-gcc}
+ CPP=
+ NGX_OBJS=objs
++NGX_SRC_DIR=$(pwd)
+ 
+ NGX_DEBUG=NO
+ NGX_CC_OPT=
+Index: nginx-catap/nginx/src/http/modules/perl/Makefile.PL
+===================================================================
+--- nginx-catap.orig/nginx/src/http/modules/perl/Makefile.PL
++++ nginx-catap/nginx/src/http/modules/perl/Makefile.PL
+@@ -15,20 +15,20 @@ WriteMakefile(
+     CCFLAGS           => "$ENV{NGX_PM_CFLAGS}",
+     OPTIMIZE          => '-O',
+ 
+-    INC               => "-I ../../../../../src/core " .
+-                         "-I ../../../../../src/event " .
+-                         "-I ../../../../../src/os/unix " .
+-                         "-I ../../../../../src/http " .
+-                         "-I ../../../../../src/http/modules " .
+-                         "-I ../../../../../src/http/modules/perl " .
+-                         "-I ../../../../../$ENV{NGX_OBJS} " .
++    INC               => "-I $ENV{NGX_SRC_DIR}/src/core " .
++                         "-I $ENV{NGX_SRC_DIR}/src/event " .
++                         "-I $ENV{NGX_SRC_DIR}/src/os/unix " .
++                         "-I $ENV{NGX_SRC_DIR}/src/http " .
++                         "-I $ENV{NGX_SRC_DIR}/src/http/modules " .
++                         "-I $ENV{NGX_SRC_DIR}/src/http/modules/perl " .
++                         "-I $ENV{NGX_OBJS} " .
+                          ($ENV{NGX_PCRE} =~ /^(YES|NO)/ ? "" :
+                              ($ENV{NGX_PCRE} =~ m#^/# ? "-I $ENV{NGX_PCRE} " :
+-                                  "-I ../../../../../$ENV{NGX_PCRE} ")),
++                                  "-I $ENV{NGX_SRC_DIR}/$ENV{NGX_PCRE} ")),
+ 
+     depend => {
+         'nginx.c'     =>
+-                  "../../../../../src/http/modules/perl/ngx_http_perl_module.h"
++                  "$ENV{NGX_SRC_DIR}/src/http/modules/perl/ngx_http_perl_module.h"
+     },
+ 
+     PM => {
+Index: nginx-catap/nginx/auto/lib/perl/make
+===================================================================
+--- nginx-catap.orig/nginx/auto/lib/perl/make
++++ nginx-catap/nginx/auto/lib/perl/make
+@@ -27,6 +27,7 @@ $NGX_OBJS/src/http/modules/perl/Makefile
+ 		&& NGX_PM_CFLAGS="\$(NGX_PM_CFLAGS) -g $NGX_CC_OPT"	\
+ 			NGX_PCRE=$PCRE					\
+ 			NGX_OBJS=$NGX_OBJS				\
++			NGX_SRC_DIR=$NGX_SRC_DIR			\
+ 		$NGX_PERL Makefile.PL					\
+ 			LIB=$NGX_PERL_MODULES				\
+ 			INSTALLSITEMAN3DIR=$NGX_PERL_MODULES_MAN

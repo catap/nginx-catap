@@ -49,15 +49,6 @@ Index: nginx-catap/nginx/src/http/modules/perl/nginx.pm
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/modules/perl/nginx.pm
 +++ nginx-catap/nginx/src/http/modules/perl/nginx.pm
-@@ -51,7 +51,7 @@ our @EXPORT = qw(
- our $VERSION = '1.0.4';
- 
- require XSLoader;
--XSLoader::load('nginx', $VERSION);
-+XSLoader::load('nginx-catap', $VERSION);
- 
- # Preloaded methods go here.
- 
 @@ -106,11 +106,11 @@ __END__
  
  =head1 NAME

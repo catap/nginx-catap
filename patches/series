@@ -1,3 +1,4 @@
+build-to-another-build-dir-with-http-perl-module.patch
 rename-to-nginx-catap.patch
 #fix-build-with-openssl-1.0.0+-dev.patch
 ngx_prealloc.patch
