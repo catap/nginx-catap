@@ -58,3 +58,6 @@
 [submodule "modules/nginx-upload-progress-module"]
 	path = modules/nginx-upload-progress-module
 	url = git://github.com/catap/nginx-upload-progress-module.git
+[submodule "modules/ngx_http_delay_module"]
+	path = modules/ngx_http_delay_module
+	url = git://github.com/catap/ngx_http_delay_module.git

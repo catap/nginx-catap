@@ -16,3 +16,5 @@ nginx-mogilefs-module
 nginx-syslog-module
 nginx-udplog-module
 nginx-upload-progress-module
+ngx_http_delay_module
+
