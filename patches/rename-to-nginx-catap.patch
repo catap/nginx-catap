@@ -123,7 +123,7 @@ Index: nginx-catap/nginx/auto/options
 ===================================================================
 --- nginx-catap.orig/nginx/auto/options
 +++ nginx-catap/nginx/auto/options
-@@ -305,11 +305,11 @@ cat << END
+@@ -306,11 +306,11 @@ cat << END
    --help                             this message
  
    --prefix=PATH                      set the installation prefix
@@ -139,7 +139,7 @@ Index: nginx-catap/nginx/auto/options
  
    --user=USER                        set non-privilege user
                                       for the worker processes
-@@ -452,10 +452,10 @@ if [ ".$NGX_PLATFORM" = ".win32" ]; then
+@@ -453,10 +453,10 @@ if [ ".$NGX_PLATFORM" = ".win32" ]; then
  fi
  
  

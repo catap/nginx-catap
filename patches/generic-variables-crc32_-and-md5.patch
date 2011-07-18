@@ -178,7 +178,7 @@ Index: nginx-catap/nginx/auto/options
 ===================================================================
 --- nginx-catap.orig/nginx/auto/options
 +++ nginx-catap/nginx/auto/options
-@@ -114,7 +114,7 @@ PCRE_OPT=
+@@ -115,7 +115,7 @@ PCRE_OPT=
  USE_OPENSSL=NO
  OPENSSL=NONE
  

@@ -18,7 +18,7 @@ Index: nginx-catap/nginx/auto/options
 ===================================================================
 --- nginx-catap.orig/nginx/auto/options
 +++ nginx-catap/nginx/auto/options
-@@ -97,6 +97,7 @@ HTTP_UPSTREAM_IP_HASH=YES
+@@ -98,6 +98,7 @@ HTTP_UPSTREAM_IP_HASH=YES
  
  # STUB
  HTTP_STUB_STATUS=NO
@@ -26,7 +26,7 @@ Index: nginx-catap/nginx/auto/options
  
  MAIL=NO
  MAIL_SSL=NO
-@@ -240,6 +241,7 @@ do
+@@ -241,6 +242,7 @@ do
  
          # STUB
          --with-http_stub_status_module)  HTTP_STUB_STATUS=YES       ;;
@@ -34,7 +34,7 @@ Index: nginx-catap/nginx/auto/options
  
          --with-mail)                     MAIL=YES                   ;;
          --with-mail_ssl_module)          MAIL_SSL=YES               ;;
-@@ -349,6 +351,7 @@ cat << END
+@@ -350,6 +352,7 @@ cat << END
    --with-http_secure_link_module     enable ngx_http_secure_link_module
    --with-http_degradation_module     enable ngx_http_degradation_module
    --with-http_stub_status_module     enable ngx_http_stub_status_module

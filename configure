@@ -15,7 +15,7 @@ chdir("$dir/nginx");
 my @args = ("--builddir=$dir/objs");
 
 open(MODULES, "<../modules/enable") || die $!;
-my @modules = map {"--add-module=../modules/$_"} grep {/^[^#]+/} <MODULES>;
+my @modules = map {"--add-module=../modules/$_"} grep {/^[^#]+/} grep {! /^$/} <MODULES>;
 close(MODULES);
 
 my @fixed_path = map {my $arg = $_; $arg =~ s!\.\./!\.\./\.\./!; $arg} @ARGV;
