@@ -142,7 +142,7 @@ Index: nginx-catap/nginx/src/os/unix/ngx_user.c
  
  /*
   * Solaris has thread-safe crypt()
-@@ -106,3 +109,32 @@ ngx_libc_crypt(ngx_pool_t *pool, u_char 
+@@ -106,3 +109,31 @@ ngx_libc_crypt(ngx_pool_t *pool, u_char 
  #endif
  
  #endif /* NGX_CRYPT */
@@ -154,7 +154,7 @@ Index: nginx-catap/nginx/src/os/unix/ngx_user.c
 +    struct sysinfo s;
 +
 +    if (sysinfo(&s)) {
-+	goto error;
++	return NGX_ERROR;
 +    }
 +
 +    return s.loads[n]/65536;
@@ -165,14 +165,13 @@ Index: nginx-catap/nginx/src/os/unix/ngx_user.c
 +    double loadavg[1];
 +
 +    if (getloadavg(loadavg, 1) == -1) {
-+	goto error;
++	return NGX_ERROR;
 +    }
 +
 +    return (int)loadavg[n];
 +
 +#endif /* NGX_HAVE_SYSINFO */
 +
-+error:
 +    return NGX_ERROR;
 +}
 Index: nginx-catap/nginx/src/os/unix/ngx_user.h
