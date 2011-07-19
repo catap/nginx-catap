@@ -14,7 +14,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_request.c
 +++ nginx-catap/nginx/src/http/ngx_http_request.c
-@@ -2012,6 +2012,7 @@ ngx_http_finalize_request(ngx_http_reque
+@@ -2005,6 +2005,7 @@ ngx_http_finalize_request(ngx_http_reque
          if (r == c->data) {
  
              r->main->count--;

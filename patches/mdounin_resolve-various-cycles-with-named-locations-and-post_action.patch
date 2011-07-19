@@ -23,7 +23,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_request.c
 +++ nginx-catap/nginx/src/http/ngx_http_request.c
-@@ -2923,6 +2923,10 @@ ngx_http_post_action(ngx_http_request_t 
+@@ -2916,6 +2916,10 @@ ngx_http_post_action(ngx_http_request_t 
          return NGX_DECLINED;
      }
  
