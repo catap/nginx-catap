@@ -65,7 +65,7 @@ mdounin_fix-fastcgi_param-with-HTTP_.patch
 mdounin_upstream-properly-allocate-memory-for-tried-flags.patch
 mdounin_upstream-fix-request-finalization-if-client-timed-out.patch
 mdounin_https-wasnt-working-on-systems-with-32-bit-off_t.patch
-mdounin_fix-another-stalled-cache-updating-alert.patch
+#mdounin_fix-another-stalled-cache-updating-alert.patch
 mdounin_upstream-properly-allocate-memory-for-tried-flags
 #ngx_http_request_chunked.patch
 

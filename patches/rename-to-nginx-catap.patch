@@ -38,31 +38,13 @@ Index: nginx-catap/nginx/src/core/nginx.h
 +#define NGINX_NAME         "nginx-catap"
 +#endif
  
- #define nginx_version      1000004
- #define NGINX_VERSION      "1.0.4"
+ #define nginx_version      1000005
+ #define NGINX_VERSION      "1.0.5"
 -#define NGINX_VER          "nginx/" NGINX_VERSION
 +#define NGINX_VER          NGINX_NAME "/" NGINX_VERSION
  
  #define NGINX_VAR          "NGINX"
  #define NGX_OLDPID_EXT     ".oldbin"
-Index: nginx-catap/nginx/src/http/modules/perl/nginx.pm
-===================================================================
---- nginx-catap.orig/nginx/src/http/modules/perl/nginx.pm
-+++ nginx-catap/nginx/src/http/modules/perl/nginx.pm
-@@ -106,11 +106,11 @@ __END__
- 
- =head1 NAME
- 
--nginx - Perl interface to the nginx HTTP server API
-+nginx-catap - Perl interface to the catap's fork of nginx HTTP server API
- 
- =head1 SYNOPSIS
- 
--  use nginx;
-+  use nginx-catap;
- 
- =head1 DESCRIPTION
- 
 Index: nginx-catap/nginx/src/http/ngx_http_header_filter_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_header_filter_module.c

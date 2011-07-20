@@ -2,7 +2,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_upstream.c
 +++ nginx-catap/nginx/src/http/ngx_http_upstream.c
-@@ -3174,7 +3174,12 @@ ngx_http_upstream_finalize_request(ngx_h
+@@ -3177,7 +3177,12 @@ ngx_http_upstream_finalize_request(ngx_h
  
      r->connection->log->action = "sending to client";
  

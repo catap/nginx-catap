@@ -62,4 +62,4 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
 +
  #if (NGX_HTTP_CACHE)
  
-     if (u->cacheable && r->cache) {
+     if (r->cache) {

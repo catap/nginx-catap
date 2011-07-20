@@ -11,7 +11,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
          return;
      }
  
-@@ -3169,6 +3169,7 @@ ngx_http_upstream_finalize_request(ngx_h
+@@ -3172,6 +3172,7 @@ ngx_http_upstream_finalize_request(ngx_h
  #endif
  
      if (u->header_sent

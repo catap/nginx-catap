@@ -121,7 +121,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_upstream.c
 +++ nginx-catap/nginx/src/http/ngx_http_upstream.c
-@@ -1609,6 +1609,8 @@ ngx_http_upstream_process_header(ngx_htt
+@@ -1618,6 +1618,8 @@ ngx_http_upstream_process_header(ngx_htt
  
          rc = u->process_header(r);
  
@@ -130,7 +130,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
          if (rc == NGX_AGAIN) {
  
              if (u->buffer.pos == u->buffer.end) {
-@@ -2067,6 +2069,8 @@ ngx_http_upstream_process_headers(ngx_ht
+@@ -2076,6 +2078,8 @@ ngx_http_upstream_process_headers(ngx_ht
  
      u->headers_in.content_length_n = r->headers_out.content_length_n;
  

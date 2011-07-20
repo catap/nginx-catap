@@ -182,7 +182,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
  static ngx_int_t ngx_http_upstream_intercept_errors(ngx_http_request_t *r,
      ngx_http_upstream_t *u);
  static ngx_int_t ngx_http_upstream_test_connect(ngx_connection_t *c);
-@@ -1644,6 +1646,10 @@ ngx_http_upstream_process_header(ngx_htt
+@@ -1653,6 +1655,10 @@ ngx_http_upstream_process_header(ngx_htt
              return;
          }
  
@@ -193,7 +193,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
          if (ngx_http_upstream_intercept_errors(r, u) == NGX_OK) {
              return;
          }
-@@ -1741,6 +1747,89 @@ ngx_http_upstream_test_next(ngx_http_req
+@@ -1750,6 +1756,89 @@ ngx_http_upstream_test_next(ngx_http_req
  
  
  static ngx_int_t
