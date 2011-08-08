@@ -1394,3 +1394,17 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.h
  
      unsigned                         request_sent:1;
      unsigned                         header_sent:1;
+Index: nginx-catap/nginx/src/http/ngx_http.h
+===================================================================
+--- nginx-catap.orig/nginx/src/http/ngx_http.h
++++ nginx-catap/nginx/src/http/ngx_http.h
+@@ -44,6 +44,9 @@ typedef u_char *(*ngx_http_log_handler_p
+ #endif
+ 
+ 
++#define NGX_UPSTREAM_KEEPALIVE_PATCHED 1
++
++
+ struct ngx_http_log_ctx_s {
+     ngx_connection_t    *connection;
+     ngx_http_request_t  *request;

@@ -1,0 +1,79 @@
+Hello!
+
+Attached patch (against 1.0.5) introduces upstream keepalive 
+support for memcached, fastcgi and http.  Note the patch is 
+experimental and may have problems (though it passes basic smoke 
+tests here).  Testing is appreciated.
+
+Major changes include:
+
+1. Content length now parsed into u->headers_in.content_length_n
+   instead of directly to r->headers_out.content_length_n.
+   Note this may break 3rd party protocol modules.
+
+2. Use off_t for r->upstream->length.
+   Note this may break 3rd party protocol modules.
+
+3. In buffered mode u->pipe->length was introduced to indicate minimal amount
+   of data which must be passed to input filter.  This allows to not rely on
+   connection close to indicate response end while still effectiently using
+   buffers in most cases.  Defaults to -1 (that is, wait for
+   connection close) if not set by protocol-specific handlers.
+
+4. In buffered mode u->input_filter_init() now called if it's set.
+   This is used to set initial value of u->pipe->length (see above).
+
+5. Proxy module now able to talk HTTP/1.1, in particular it understands
+   chunked encoding in responses.  Requests are sent using HTTP/1.1
+   if proxy_http_version directive is set to 1.1.
+
+6. Introduced u->keepalive flag to indicate connection to upstream is in
+   correct state and may be kept alive.  Memcached, fastcgi and proxy
+   modules are updated to set it.
+
+Patch is expected to be used with upstream keepalive module[1] compiled with
+NGX_UPSTREAM_KEEPALIVE_PATCHED defined, i.e use something like this:
+
+    ./configure --with-cc-opt="-D NGX_UPSTREAM_KEEPALIVE_PATCHED" \
+        --add-module=/path/to/ngx_http_upstream_keepalive
+
+And use something like this in config:
+
+    upstream memcached_backend {
+        server 127.0.0.1:11211;
+        keepalive 1;
+    }
+
+    upstream http_backend {
+        server 127.0.0.1:8080;
+        keepalive 1;
+    }
+
+    upstream fastcgi_backend {
+        server 127.0.0.1:9000;
+        keepalive 1;
+    }
+
+    server {
+        ...
+
+        location /memcached/ {
+            set $memcached_key $uri;
+            memcached_pass memcached_backend;
+        }
+
+        location /fastcgi/ {
+            fastcgi_pass fastcgi_backend;
+            ...
+        }
+
+        location /http/ {
+            proxy_pass http://http_backend;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            ...
+        }
+    }
+
+[1] http://mdounin.ru/hg/ngx_http_upstream_keepalive/
+
