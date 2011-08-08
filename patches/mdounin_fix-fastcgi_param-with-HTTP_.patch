@@ -2,7 +2,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/modules/ngx_http_fastcgi_module.c
 +++ nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
-@@ -693,11 +693,12 @@ ngx_http_fastcgi_create_request(ngx_http
+@@ -691,11 +691,12 @@ ngx_http_fastcgi_create_request(ngx_http
      u_char                        ch, *pos, *lowcase_key;
      size_t                        size, len, key_len, val_len, padding,
                                    allocated;
@@ -17,7 +17,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
      ngx_http_script_code_pt       code;
      ngx_http_script_engine_t      e, le;
      ngx_http_fastcgi_header_t    *h;
-@@ -705,7 +706,6 @@ ngx_http_fastcgi_create_request(ngx_http
+@@ -703,7 +704,6 @@ ngx_http_fastcgi_create_request(ngx_http
      ngx_http_script_len_code_pt   lcode;
  
      len = 0;
@@ -25,7 +25,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
      ignored = NULL;
  
      flcf = ngx_http_get_module_loc_conf(r, ngx_http_fastcgi_module);
-@@ -739,7 +739,17 @@ ngx_http_fastcgi_create_request(ngx_http
+@@ -737,7 +737,17 @@ ngx_http_fastcgi_create_request(ngx_http
          lowcase_key = NULL;
  
          if (flcf->header_params) {
@@ -44,7 +44,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
              if (ignored == NULL) {
                  return NGX_ERROR;
              }
-@@ -747,6 +757,7 @@ ngx_http_fastcgi_create_request(ngx_http
+@@ -745,6 +755,7 @@ ngx_http_fastcgi_create_request(ngx_http
  
          part = &r->headers_in.headers.part;
          header = part->elts;
@@ -52,7 +52,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
  
          for (i = 0; /* void */; i++) {
  
-@@ -786,10 +797,16 @@ ngx_http_fastcgi_create_request(ngx_http
+@@ -784,10 +795,16 @@ ngx_http_fastcgi_create_request(ngx_http
                  }
  
                  if (ngx_hash_find(&flcf->headers_hash, hash, lowcase_key, n)) {
@@ -70,7 +70,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
                  n += sizeof("HTTP_") - 1;
  
              } else {
-@@ -904,6 +921,7 @@ ngx_http_fastcgi_create_request(ngx_http
+@@ -902,6 +919,7 @@ ngx_http_fastcgi_create_request(ngx_http
  
          part = &r->headers_in.headers.part;
          header = part->elts;
@@ -78,7 +78,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
  
          for (i = 0; /* void */; i++) {
  
-@@ -917,9 +935,13 @@ ngx_http_fastcgi_create_request(ngx_http
+@@ -915,9 +933,13 @@ ngx_http_fastcgi_create_request(ngx_http
                  i = 0;
              }
  
@@ -95,7 +95,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
                  }
              }
  
-@@ -966,9 +988,6 @@ ngx_http_fastcgi_create_request(ngx_http
+@@ -964,9 +986,6 @@ ngx_http_fastcgi_create_request(ngx_http
                             "fastcgi param: \"%*s: %*s\"",
                             key_len, b->last - (key_len + val_len),
                             val_len, b->last - val_len);
