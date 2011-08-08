@@ -17,7 +17,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_core_module.c
 +++ nginx-catap/nginx/src/http/ngx_http_core_module.c
-@@ -1013,6 +1013,10 @@ ngx_http_core_find_config_phase(ngx_http
+@@ -1029,6 +1029,10 @@ ngx_http_core_find_config_phase(ngx_http
      }
  
      if (rc == NGX_DONE) {
@@ -28,7 +28,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
          r->headers_out.location = ngx_list_push(&r->headers_out.headers);
          if (r->headers_out.location == NULL) {
              ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
-@@ -1834,6 +1838,10 @@ ngx_http_send_response(ngx_http_request_
+@@ -1850,6 +1854,10 @@ ngx_http_send_response(ngx_http_request_
  
      if (status >= NGX_HTTP_MOVED_PERMANENTLY && status <= NGX_HTTP_SEE_OTHER) {
  

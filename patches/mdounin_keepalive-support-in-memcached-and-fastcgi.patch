@@ -101,7 +101,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/modules/ngx_http_proxy_module.c
 +++ nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
-@@ -1398,6 +1398,15 @@ ngx_http_proxy_process_header(ngx_http_r
+@@ -1400,6 +1400,15 @@ ngx_http_proxy_process_header(ngx_http_r
                  h->lowcase_key = (u_char *) "date";
              }
  
@@ -121,7 +121,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_upstream.c
 +++ nginx-catap/nginx/src/http/ngx_http_upstream.c
-@@ -1618,6 +1618,8 @@ ngx_http_upstream_process_header(ngx_htt
+@@ -1620,6 +1620,8 @@ ngx_http_upstream_process_header(ngx_htt
  
          rc = u->process_header(r);
  
@@ -130,7 +130,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
          if (rc == NGX_AGAIN) {
  
              if (u->buffer.pos == u->buffer.end) {
-@@ -2076,6 +2078,8 @@ ngx_http_upstream_process_headers(ngx_ht
+@@ -2078,6 +2080,8 @@ ngx_http_upstream_process_headers(ngx_ht
  
      u->headers_in.content_length_n = r->headers_out.content_length_n;
  
@@ -139,7 +139,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
      if (r->headers_out.content_length_n != -1) {
          u->length = (size_t) r->headers_out.content_length_n;
  
-@@ -2208,6 +2212,8 @@ ngx_http_upstream_send_response(ngx_http
+@@ -2210,6 +2214,8 @@ ngx_http_upstream_send_response(ngx_http
  
      if (!u->buffering) {
  
@@ -148,7 +148,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
          if (u->input_filter == NULL) {
              u->input_filter_init = ngx_http_upstream_non_buffered_filter_init;
              u->input_filter = ngx_http_upstream_non_buffered_filter;
-@@ -2364,13 +2370,6 @@ ngx_http_upstream_send_response(ngx_http
+@@ -2366,13 +2372,6 @@ ngx_http_upstream_send_response(ngx_http
      p->pool = r->pool;
      p->log = c->log;
  

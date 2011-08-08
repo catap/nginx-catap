@@ -2,7 +2,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_upstream_round_robin.c
 +++ nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
-@@ -667,7 +667,7 @@ failed:
+@@ -674,7 +674,7 @@ failed:
  static ngx_uint_t
  ngx_http_upstream_get_peer(ngx_http_upstream_rr_peers_t *peers)
  {
@@ -11,7 +11,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
      ngx_http_upstream_rr_peer_t  *peer;
  
      peer = &peers->peer[0];
-@@ -706,6 +706,10 @@ ngx_http_upstream_get_peer(ngx_http_upst
+@@ -713,6 +713,10 @@ ngx_http_upstream_get_peer(ngx_http_upst
              return n;
          }
  

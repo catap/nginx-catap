@@ -20,7 +20,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
  static char *ngx_http_core_server(ngx_conf_t *cf, ngx_command_t *cmd,
      void *dummy);
  static char *ngx_http_core_location(ngx_conf_t *cf, ngx_command_t *cmd,
-@@ -179,6 +183,15 @@ static ngx_str_t  ngx_http_gzip_private 
+@@ -188,6 +192,15 @@ static ngx_str_t  ngx_http_gzip_private 
  
  #endif
  
@@ -36,7 +36,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
  
  static ngx_command_t  ngx_http_core_commands[] = {
  
-@@ -711,6 +724,14 @@ static ngx_command_t  ngx_http_core_comm
+@@ -727,6 +740,14 @@ static ngx_command_t  ngx_http_core_comm
        offsetof(ngx_http_core_loc_conf_t, resolver_timeout),
        NULL },
  
@@ -51,7 +51,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
  #if (NGX_HTTP_GZIP)
  
      { ngx_string("gzip_vary"),
-@@ -760,7 +781,7 @@ static ngx_command_t  ngx_http_core_comm
+@@ -776,7 +797,7 @@ static ngx_command_t  ngx_http_core_comm
  
  static ngx_http_module_t  ngx_http_core_module_ctx = {
      ngx_http_core_preconfiguration,        /* preconfiguration */
@@ -60,7 +60,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
  
      ngx_http_core_create_main_conf,        /* create main configuration */
      ngx_http_core_init_main_conf,          /* init main configuration */
-@@ -3189,6 +3210,23 @@ ngx_http_core_preconfiguration(ngx_conf_
+@@ -3337,6 +3358,23 @@ ngx_http_core_preconfiguration(ngx_conf_
      return ngx_http_variables_add_core_vars(cf);
  }
  
@@ -84,7 +84,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
  
  static void *
  ngx_http_core_create_main_conf(ngx_conf_t *cf)
-@@ -3284,6 +3322,8 @@ ngx_http_core_create_srv_conf(ngx_conf_t
+@@ -3432,6 +3470,8 @@ ngx_http_core_create_srv_conf(ngx_conf_t
      cscf->merge_slashes = NGX_CONF_UNSET;
      cscf->underscores_in_headers = NGX_CONF_UNSET;
  
@@ -93,7 +93,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      return cscf;
  }
  
-@@ -3357,6 +3397,10 @@ ngx_http_core_merge_srv_conf(ngx_conf_t 
+@@ -3505,6 +3545,10 @@ ngx_http_core_merge_srv_conf(ngx_conf_t 
          return NGX_CONF_ERROR;
      }
  
@@ -104,7 +104,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
      return NGX_CONF_OK;
  }
  
-@@ -3696,6 +3740,7 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
+@@ -3847,6 +3891,7 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
  
      ngx_conf_merge_sec_value(conf->open_file_cache_events,
                                prev->open_file_cache_events, 0);
@@ -112,7 +112,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
  #if (NGX_HTTP_GZIP)
  
      ngx_conf_merge_value(conf->gzip_vary, prev->gzip_vary, 0);
-@@ -3741,6 +3786,40 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
+@@ -3892,6 +3937,40 @@ ngx_http_core_merge_loc_conf(ngx_conf_t 
  }
  
  
@@ -157,7 +157,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.h
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_core_module.h
 +++ nginx-catap/nginx/src/http/ngx_http_core_module.h
-@@ -37,6 +37,13 @@
+@@ -42,6 +42,13 @@
  #define NGX_HTTP_IMS_EXACT              1
  #define NGX_HTTP_IMS_BEFORE             2
  
@@ -171,7 +171,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.h
  
  #define NGX_HTTP_KEEPALIVE_DISABLE_NONE    0x0002
  #define NGX_HTTP_KEEPALIVE_DISABLE_MSIE6   0x0004
-@@ -194,6 +201,8 @@ typedef struct {
+@@ -199,6 +206,8 @@ typedef struct {
      unsigned                    captures:1;
  #endif
  

@@ -48,7 +48,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
      r->state = 0;
  
      if (plcf->redirects) {
-@@ -1609,6 +1627,95 @@ ngx_http_proxy_rewrite_redirect_vars(ngx
+@@ -1611,6 +1629,95 @@ ngx_http_proxy_rewrite_redirect_vars(ngx
  
  
  static ngx_int_t
@@ -144,7 +144,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
  ngx_http_proxy_add_variables(ngx_conf_t *cf)
  {
      ngx_http_variable_t  *var, *v;
-@@ -1651,6 +1758,7 @@ ngx_http_proxy_create_loc_conf(ngx_conf_
+@@ -1653,6 +1760,7 @@ ngx_http_proxy_create_loc_conf(ngx_conf_
       *     conf->upstream.location = NULL;
       *     conf->upstream.store_lengths = NULL;
       *     conf->upstream.store_values = NULL;
@@ -152,7 +152,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
       *
       *     conf->method = NULL;
       *     conf->headers_source = NULL;
-@@ -1969,6 +2077,16 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
+@@ -1973,6 +2081,16 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
  
      ngx_conf_merge_value(conf->redirect, prev->redirect, 1);
  
@@ -182,7 +182,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
  static ngx_int_t ngx_http_upstream_intercept_errors(ngx_http_request_t *r,
      ngx_http_upstream_t *u);
  static ngx_int_t ngx_http_upstream_test_connect(ngx_connection_t *c);
-@@ -1653,6 +1655,10 @@ ngx_http_upstream_process_header(ngx_htt
+@@ -1655,6 +1657,10 @@ ngx_http_upstream_process_header(ngx_htt
              return;
          }
  
@@ -193,7 +193,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
          if (ngx_http_upstream_intercept_errors(r, u) == NGX_OK) {
              return;
          }
-@@ -1750,6 +1756,89 @@ ngx_http_upstream_test_next(ngx_http_req
+@@ -1752,6 +1758,89 @@ ngx_http_upstream_test_next(ngx_http_req
  
  
  static ngx_int_t
@@ -299,16 +299,15 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.h
  typedef struct {
      ngx_msec_t                       bl_time;
      ngx_uint_t                       bl_state;
-@@ -191,6 +196,8 @@ typedef struct {
+@@ -191,6 +196,7 @@ typedef struct {
      ngx_flag_t                       ssl_session_reuse;
  #endif
  
 +    ngx_uint_t                       redirect_follow;
-+
+     ngx_str_t                        module;
  } ngx_http_upstream_conf_t;
  
- 
-@@ -299,6 +306,8 @@ struct ngx_http_upstream_s {
+@@ -300,6 +306,8 @@ struct ngx_http_upstream_s {
                                           ngx_int_t rc);
      ngx_int_t                      (*rewrite_redirect)(ngx_http_request_t *r,
                                           ngx_table_elt_t *h, size_t prefix);

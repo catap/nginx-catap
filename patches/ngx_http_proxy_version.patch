@@ -49,7 +49,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
  
  
  static ngx_keyval_t  ngx_http_proxy_headers[] = {
-@@ -882,7 +899,19 @@ ngx_http_proxy_create_request(ngx_http_r
+@@ -884,7 +901,19 @@ ngx_http_proxy_create_request(ngx_http_r
          method.len++;
      }
  
@@ -70,7 +70,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
  
      escape = 0;
      loc_len = 0;
-@@ -1025,8 +1054,20 @@ ngx_http_proxy_create_request(ngx_http_r
+@@ -1027,8 +1056,20 @@ ngx_http_proxy_create_request(ngx_http_r
  
      u->uri.len = b->last - u->uri.data;
  
@@ -93,7 +93,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
  
      ngx_memzero(&e, sizeof(ngx_http_script_engine_t));
  
-@@ -1813,6 +1854,8 @@ ngx_http_proxy_create_loc_conf(ngx_conf_
+@@ -1815,6 +1856,8 @@ ngx_http_proxy_create_loc_conf(ngx_conf_
      conf->redirect = NGX_CONF_UNSET;
      conf->upstream.change_buffering = 1;
  
@@ -102,7 +102,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
      conf->headers_hash_max_size = NGX_CONF_UNSET_UINT;
      conf->headers_hash_bucket_size = NGX_CONF_UNSET_UINT;
  
-@@ -2054,6 +2097,8 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
+@@ -2058,6 +2101,8 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
  
  #endif
  

@@ -2,7 +2,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_upstream_round_robin.c
 +++ nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
-@@ -280,13 +280,18 @@ ngx_http_upstream_init_round_robin_peer(
+@@ -289,13 +289,18 @@ ngx_http_upstream_init_round_robin_peer(
      rrp->peers = us->peer.data;
      rrp->current = 0;
  

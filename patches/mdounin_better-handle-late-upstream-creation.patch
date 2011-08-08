@@ -2,7 +2,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_upstream.c
 +++ nginx-catap/nginx/src/http/ngx_http_upstream.c
-@@ -4404,6 +4404,10 @@ ngx_http_upstream_add(ngx_conf_t *cf, ng
+@@ -4407,6 +4407,10 @@ ngx_http_upstream_add(ngx_conf_t *cf, ng
              continue;
          }
  

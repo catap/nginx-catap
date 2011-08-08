@@ -214,7 +214,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_core_module.c
 +++ nginx-catap/nginx/src/http/ngx_http_core_module.c
-@@ -2216,6 +2216,7 @@ ngx_http_subrequest(ngx_http_request_t *
+@@ -2364,6 +2364,7 @@ ngx_http_subrequest(ngx_http_request_t *
      ngx_http_clear_content_length(sr);
      ngx_http_clear_accept_ranges(sr);
      ngx_http_clear_last_modified(sr);
@@ -226,7 +226,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.h
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_core_module.h
 +++ nginx-catap/nginx/src/http/ngx_http_core_module.h
-@@ -522,5 +522,15 @@ extern ngx_str_t  ngx_http_core_get_meth
+@@ -528,5 +528,15 @@ extern ngx_str_t  ngx_http_core_get_meth
          r->headers_out.last_modified = NULL;                                  \
      }
  
@@ -349,7 +349,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.h
      ngx_table_elt_t                  *user_agent;
      ngx_table_elt_t                  *referer;
      ngx_table_elt_t                  *content_length;
-@@ -263,6 +264,10 @@ typedef struct {
+@@ -262,6 +263,10 @@ typedef struct {
      off_t                             content_length_n;
      time_t                            date_time;
      time_t                            last_modified_time;

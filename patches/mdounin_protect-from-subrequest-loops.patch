@@ -2,7 +2,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_core_module.c
 +++ nginx-catap/nginx/src/http/ngx_http_core_module.c
-@@ -2354,7 +2354,6 @@ ngx_http_subrequest(ngx_http_request_t *
+@@ -2502,7 +2502,6 @@ ngx_http_subrequest(ngx_http_request_t *
      sr->start_sec = tp->sec;
      sr->start_msec = tp->msec;
  
@@ -14,7 +14,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_request.c
 +++ nginx-catap/nginx/src/http/ngx_http_request.c
-@@ -2005,6 +2005,7 @@ ngx_http_finalize_request(ngx_http_reque
+@@ -2002,6 +2002,7 @@ ngx_http_finalize_request(ngx_http_reque
          if (r == c->data) {
  
              r->main->count--;

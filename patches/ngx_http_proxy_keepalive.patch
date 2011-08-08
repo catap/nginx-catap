@@ -78,7 +78,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
      rc = ngx_http_read_client_request_body(r, ngx_http_upstream_init);
  
      if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
-@@ -1491,6 +1511,26 @@ ngx_http_proxy_port_variable(ngx_http_re
+@@ -1493,6 +1513,26 @@ ngx_http_proxy_port_variable(ngx_http_re
  
  
  static ngx_int_t
@@ -105,16 +105,16 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
  ngx_http_proxy_add_x_forwarded_for_variable(ngx_http_request_t *r,
      ngx_http_variable_value_t *v, uintptr_t data)
  {
-@@ -1868,6 +1908,8 @@ ngx_http_proxy_create_loc_conf(ngx_conf_
-     conf->headers_hash_max_size = NGX_CONF_UNSET_UINT;
-     conf->headers_hash_bucket_size = NGX_CONF_UNSET_UINT;
+@@ -1872,6 +1912,8 @@ ngx_http_proxy_create_loc_conf(ngx_conf_
+ 
+     ngx_str_set(&conf->upstream.module, "proxy");
  
 +    conf->keepalive = NGX_CONF_UNSET;
 +
      return conf;
  }
  
-@@ -2271,6 +2313,8 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
+@@ -2275,6 +2317,8 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
          return NGX_CONF_ERROR;
      }
  

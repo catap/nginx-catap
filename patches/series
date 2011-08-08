@@ -41,7 +41,7 @@ ngx_http_memcached_gzip_flag.patch
 mdounin_handle-smtp-multiline-replies.patch
 mdounin_additional-headers-for-upstream_ignore_headers.patch
 mdounin_fix-cpu-hog-with-all-upstream-servers-marked-down.patch
-mdounin_cache-correctly-set-conf_file-while-adding-paths.patch
+#mdounin_cache-correctly-set-conf_file-while-adding-paths.patch
 mdounin_fix-proxy_store-leaving-temporary-files-for-subrequests.patch
 mdounin_cache-fix-sending-of-empty-responses.patch
 mdounin_cache-fix-sending-of-stale-responses.patch
@@ -63,8 +63,8 @@ mdounin_keepalive-support-in-memcached-and-fastcgi.patch
 ngx_http_proxy_keepalive.patch
 mdounin_fix-fastcgi_param-with-HTTP_.patch
 mdounin_upstream-properly-allocate-memory-for-tried-flags.patch
-mdounin_upstream-fix-request-finalization-if-client-timed-out.patch
-mdounin_https-wasnt-working-on-systems-with-32-bit-off_t.patch
+#mdounin_upstream-fix-request-finalization-if-client-timed-out.patch
+#mdounin_https-wasnt-working-on-systems-with-32-bit-off_t.patch
 #mdounin_fix-another-stalled-cache-updating-alert.patch
 mdounin_upstream-properly-allocate-memory-for-tried-flags
 #ngx_http_request_chunked.patch

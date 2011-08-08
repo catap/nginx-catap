@@ -11,7 +11,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
        ngx_http_proxy_cache,
        NGX_HTTP_LOC_CONF_OFFSET,
        0,
-@@ -1683,7 +1683,8 @@ ngx_http_proxy_create_loc_conf(ngx_conf_
+@@ -1685,7 +1685,8 @@ ngx_http_proxy_create_loc_conf(ngx_conf_
      conf->upstream.pass_request_body = NGX_CONF_UNSET;
  
  #if (NGX_HTTP_CACHE)
@@ -21,7 +21,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
      conf->upstream.cache_min_uses = NGX_CONF_UNSET_UINT;
      conf->upstream.cache_bypass = NGX_CONF_UNSET_PTR;
      conf->upstream.no_cache = NGX_CONF_UNSET_PTR;
-@@ -1725,6 +1726,10 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
+@@ -1729,6 +1730,10 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
      ngx_http_proxy_redirect_t  *pr;
      ngx_http_script_compile_t   sc;
  
@@ -32,7 +32,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
      if (conf->upstream.store != 0) {
          ngx_conf_merge_value(conf->upstream.store,
                                prev->upstream.store, 0);
-@@ -1878,19 +1883,27 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
+@@ -1882,19 +1887,27 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t
  
  #if (NGX_HTTP_CACHE)
  
@@ -70,7 +70,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
      }
  
      ngx_conf_merge_uint_value(conf->upstream.cache_min_uses,
-@@ -2115,7 +2128,7 @@ ngx_http_proxy_merge_headers(ngx_conf_t 
+@@ -2119,7 +2132,7 @@ ngx_http_proxy_merge_headers(ngx_conf_t 
  
      if (conf->headers_set_hash.buckets
  #if (NGX_HTTP_CACHE)
@@ -79,7 +79,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
  #endif
         )
      {
-@@ -2152,8 +2165,8 @@ ngx_http_proxy_merge_headers(ngx_conf_t 
+@@ -2156,8 +2169,8 @@ ngx_http_proxy_merge_headers(ngx_conf_t 
  
  #if (NGX_HTTP_CACHE)
  
@@ -90,7 +90,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
  #else
  
      h = ngx_http_proxy_headers;
-@@ -2612,8 +2625,8 @@ ngx_http_proxy_store(ngx_conf_t *cf, ngx
+@@ -2616,8 +2629,8 @@ ngx_http_proxy_store(ngx_conf_t *cf, ngx
  
  #if (NGX_HTTP_CACHE)
  
@@ -101,7 +101,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
      {
          return "is incompatible with \"proxy_cache\"";
      }
-@@ -2654,15 +2667,16 @@ ngx_http_proxy_cache(ngx_conf_t *cf, ngx
+@@ -2658,15 +2671,16 @@ ngx_http_proxy_cache(ngx_conf_t *cf, ngx
      ngx_http_proxy_loc_conf_t *plcf = conf;
  
      ngx_str_t  *value;
@@ -120,7 +120,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_proxy_module.c
          return NGX_CONF_OK;
      }
  
-@@ -2670,12 +2684,22 @@ ngx_http_proxy_cache(ngx_conf_t *cf, ngx
+@@ -2674,12 +2688,22 @@ ngx_http_proxy_cache(ngx_conf_t *cf, ngx
          return "is incompatible with \"proxy_store\"";
      }
  
@@ -159,7 +159,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
          ngx_int_t  rc;
  
          rc = ngx_http_upstream_cache(r, u);
-@@ -744,9 +744,12 @@ ngx_http_upstream_cache(ngx_http_request
+@@ -746,9 +746,12 @@ ngx_http_upstream_cache(ngx_http_request
  
          c = r->cache;
  
@@ -173,7 +173,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
  
          u->cache_status = NGX_HTTP_CACHE_MISS;
      }
-@@ -2201,9 +2204,13 @@ ngx_http_upstream_send_response(ngx_http
+@@ -2203,9 +2206,13 @@ ngx_http_upstream_send_response(ngx_http
  
          if (u->cache_status == NGX_HTTP_CACHE_BYPASS) {
  
@@ -188,7 +188,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
  
              if (ngx_http_file_cache_create(r) != NGX_OK) {
                  ngx_http_upstream_finalize_request(r, u, 0);
-@@ -4404,7 +4411,7 @@ ngx_http_upstream_hide_headers_hash(ngx_
+@@ -4407,7 +4414,7 @@ ngx_http_upstream_hide_headers_hash(ngx_
  
          if (conf->hide_headers_hash.buckets
  #if (NGX_HTTP_CACHE)
@@ -234,7 +234,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
      conf->upstream.cache_min_uses = NGX_CONF_UNSET_UINT;
      conf->upstream.cache_bypass = NGX_CONF_UNSET_PTR;
      conf->upstream.no_cache = NGX_CONF_UNSET_PTR;
-@@ -2179,19 +2180,27 @@ ngx_http_fastcgi_merge_loc_conf(ngx_conf
+@@ -2181,19 +2182,27 @@ ngx_http_fastcgi_merge_loc_conf(ngx_conf
  
  #if (NGX_HTTP_CACHE)
  
@@ -272,7 +272,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
      }
  
      ngx_conf_merge_uint_value(conf->upstream.cache_min_uses,
-@@ -2292,8 +2301,8 @@ ngx_http_fastcgi_merge_loc_conf(ngx_conf
+@@ -2294,8 +2303,8 @@ ngx_http_fastcgi_merge_loc_conf(ngx_conf
  
          if (conf->params_source == NULL) {
  
@@ -283,7 +283,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
              {
                  return NGX_CONF_OK;
              }
-@@ -2334,7 +2343,7 @@ ngx_http_fastcgi_merge_loc_conf(ngx_conf
+@@ -2336,7 +2345,7 @@ ngx_http_fastcgi_merge_loc_conf(ngx_conf
  
  #if (NGX_HTTP_CACHE)
  
@@ -292,7 +292,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
          ngx_keyval_t  *h, *s;
  
          for (h = ngx_http_fastcgi_cache_headers; h->key.len; h++) {
-@@ -2732,8 +2741,8 @@ ngx_http_fastcgi_store(ngx_conf_t *cf, n
+@@ -2734,8 +2743,8 @@ ngx_http_fastcgi_store(ngx_conf_t *cf, n
  
  #if (NGX_HTTP_CACHE)
  
@@ -303,7 +303,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
      {
          return "is incompatible with \"fastcgi_cache\"";
      }
-@@ -2774,15 +2783,16 @@ ngx_http_fastcgi_cache(ngx_conf_t *cf, n
+@@ -2776,15 +2785,16 @@ ngx_http_fastcgi_cache(ngx_conf_t *cf, n
      ngx_http_fastcgi_loc_conf_t *flcf = conf;
  
      ngx_str_t  *value;
@@ -322,7 +322,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_fastcgi_module.c
          return NGX_CONF_OK;
      }
  
-@@ -2790,12 +2800,22 @@ ngx_http_fastcgi_cache(ngx_conf_t *cf, n
+@@ -2792,12 +2802,22 @@ ngx_http_fastcgi_cache(ngx_conf_t *cf, n
          return "is incompatible with \"fastcgi_store\"";
      }
  
@@ -371,7 +371,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_scgi_module.c
      conf->upstream.cache_min_uses = NGX_CONF_UNSET_UINT;
      conf->upstream.cache_bypass = NGX_CONF_UNSET_PTR;
      conf->upstream.no_cache = NGX_CONF_UNSET_PTR;
-@@ -1204,19 +1205,27 @@ ngx_http_scgi_merge_loc_conf(ngx_conf_t 
+@@ -1206,19 +1207,27 @@ ngx_http_scgi_merge_loc_conf(ngx_conf_t 
  
  #if (NGX_HTTP_CACHE)
  
@@ -409,7 +409,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_scgi_module.c
      }
  
      ngx_conf_merge_uint_value(conf->upstream.cache_min_uses,
-@@ -1299,8 +1308,8 @@ ngx_http_scgi_merge_loc_conf(ngx_conf_t 
+@@ -1301,8 +1310,8 @@ ngx_http_scgi_merge_loc_conf(ngx_conf_t 
  
          if (conf->params_source == NULL) {
  
@@ -420,7 +420,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_scgi_module.c
              {
                  return NGX_CONF_OK;
              }
-@@ -1341,7 +1350,7 @@ ngx_http_scgi_merge_loc_conf(ngx_conf_t 
+@@ -1343,7 +1352,7 @@ ngx_http_scgi_merge_loc_conf(ngx_conf_t 
  
  #if (NGX_HTTP_CACHE)
  
@@ -429,7 +429,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_scgi_module.c
          ngx_keyval_t  *h, *s;
  
          for (h = ngx_http_scgi_cache_headers; h->key.len; h++) {
-@@ -1558,8 +1567,8 @@ ngx_http_scgi_store(ngx_conf_t *cf, ngx_
+@@ -1560,8 +1569,8 @@ ngx_http_scgi_store(ngx_conf_t *cf, ngx_
  
  #if (NGX_HTTP_CACHE)
  
@@ -440,7 +440,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_scgi_module.c
      {
          return "is incompatible with \"scgi_cache\"";
      }
-@@ -1600,15 +1609,16 @@ ngx_http_scgi_cache(ngx_conf_t *cf, ngx_
+@@ -1602,15 +1611,16 @@ ngx_http_scgi_cache(ngx_conf_t *cf, ngx_
      ngx_http_scgi_loc_conf_t *scf = conf;
  
      ngx_str_t  *value;
@@ -459,7 +459,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_scgi_module.c
          return NGX_CONF_OK;
      }
  
-@@ -1616,12 +1626,22 @@ ngx_http_scgi_cache(ngx_conf_t *cf, ngx_
+@@ -1618,12 +1628,22 @@ ngx_http_scgi_cache(ngx_conf_t *cf, ngx_
          return "is incompatible with \"scgi_store\"";
      }
  
@@ -508,7 +508,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_uwsgi_module.c
      conf->upstream.cache_min_uses = NGX_CONF_UNSET_UINT;
      conf->upstream.cache_bypass = NGX_CONF_UNSET_PTR;
      conf->upstream.no_cache = NGX_CONF_UNSET_PTR;
-@@ -1257,19 +1258,27 @@ ngx_http_uwsgi_merge_loc_conf(ngx_conf_t
+@@ -1259,19 +1260,27 @@ ngx_http_uwsgi_merge_loc_conf(ngx_conf_t
  
  #if (NGX_HTTP_CACHE)
  
@@ -546,7 +546,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_uwsgi_module.c
      }
  
      ngx_conf_merge_uint_value(conf->upstream.cache_min_uses,
-@@ -1357,8 +1366,8 @@ ngx_http_uwsgi_merge_loc_conf(ngx_conf_t
+@@ -1359,8 +1368,8 @@ ngx_http_uwsgi_merge_loc_conf(ngx_conf_t
  
          if (conf->params_source == NULL) {
  
@@ -557,7 +557,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_uwsgi_module.c
              {
                  return NGX_CONF_OK;
              }
-@@ -1399,7 +1408,7 @@ ngx_http_uwsgi_merge_loc_conf(ngx_conf_t
+@@ -1401,7 +1410,7 @@ ngx_http_uwsgi_merge_loc_conf(ngx_conf_t
  
  #if (NGX_HTTP_CACHE)
  
@@ -566,7 +566,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_uwsgi_module.c
          ngx_keyval_t  *h, *s;
  
          for (h = ngx_http_uwsgi_cache_headers; h->key.len; h++) {
-@@ -1610,8 +1619,8 @@ ngx_http_uwsgi_store(ngx_conf_t *cf, ngx
+@@ -1612,8 +1621,8 @@ ngx_http_uwsgi_store(ngx_conf_t *cf, ngx
  
  #if (NGX_HTTP_CACHE)
  
@@ -577,7 +577,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_uwsgi_module.c
      {
          return "is incompatible with \"uwsgi_cache\"";
      }
-@@ -1652,15 +1661,16 @@ ngx_http_uwsgi_cache(ngx_conf_t *cf, ngx
+@@ -1654,15 +1663,16 @@ ngx_http_uwsgi_cache(ngx_conf_t *cf, ngx
      ngx_http_uwsgi_loc_conf_t *uwcf = conf;
  
      ngx_str_t  *value;
@@ -596,7 +596,7 @@ Index: nginx-catap/nginx/src/http/modules/ngx_http_uwsgi_module.c
          return NGX_CONF_OK;
      }
  
-@@ -1668,12 +1678,22 @@ ngx_http_uwsgi_cache(ngx_conf_t *cf, ngx
+@@ -1670,12 +1680,22 @@ ngx_http_uwsgi_cache(ngx_conf_t *cf, ngx
          return "is incompatible with \"uwsgi_store\"";
      }
  

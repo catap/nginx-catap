@@ -2,9 +2,9 @@ Index: nginx-catap/nginx/src/http/ngx_http_file_cache.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_file_cache.c
 +++ nginx-catap/nginx/src/http/ngx_http_file_cache.c
-@@ -860,6 +860,10 @@ ngx_http_cache_send(ngx_http_request_t *
+@@ -853,6 +853,10 @@ ngx_http_cache_send(ngx_http_request_t *
      ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "http file cache send: %s", c->file.name.data);
+                    "http file cache send: %s", c->file.name.data);
  
 +    if (r != r->main && c->length - c->body_start == 0) {
 +        return ngx_http_send_header(r);
@@ -13,7 +13,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_file_cache.c
      /* we need to allocate all before the header would be sent */
  
      b = ngx_pcalloc(r->pool, sizeof(ngx_buf_t));
-@@ -872,8 +876,6 @@ ngx_http_cache_send(ngx_http_request_t *
+@@ -865,8 +869,6 @@ ngx_http_cache_send(ngx_http_request_t *
          return NGX_HTTP_INTERNAL_SERVER_ERROR;
      }
  
@@ -22,7 +22,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_file_cache.c
      rc = ngx_http_send_header(r);
  
      if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
-@@ -883,7 +885,7 @@ ngx_http_cache_send(ngx_http_request_t *
+@@ -876,7 +878,7 @@ ngx_http_cache_send(ngx_http_request_t *
      b->file_pos = c->body_start;
      b->file_last = c->length;
  

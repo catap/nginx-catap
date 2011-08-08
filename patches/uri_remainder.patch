@@ -2,7 +2,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_core_module.c
 +++ nginx-catap/nginx/src/http/ngx_http_core_module.c
-@@ -953,6 +953,14 @@ ngx_http_core_find_config_phase(ngx_http
+@@ -969,6 +969,14 @@ ngx_http_core_find_config_phase(ngx_http
      }
  #endif
  
@@ -21,7 +21,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.h
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_request.h
 +++ nginx-catap/nginx/src/http/ngx_http_request.h
-@@ -386,6 +386,7 @@ struct ngx_http_request_s {
+@@ -385,6 +385,7 @@ struct ngx_http_request_s {
  
      ngx_str_t                         request_line;
      ngx_str_t                         uri;

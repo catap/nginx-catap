@@ -90,7 +90,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.c
      if (ngx_event_flags & NGX_USE_CLEAR_EVENT) {
  
          if (!c->write->active) {
-@@ -4582,3 +4610,31 @@ ngx_http_upstream_init_main_conf(ngx_con
+@@ -4585,3 +4613,31 @@ ngx_http_upstream_init_main_conf(ngx_con
  
      return NGX_CONF_OK;
  }
@@ -126,7 +126,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream.h
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_upstream.h
 +++ nginx-catap/nginx/src/http/ngx_http_upstream.h
-@@ -309,6 +309,9 @@ struct ngx_http_upstream_s {
+@@ -310,6 +310,9 @@ struct ngx_http_upstream_s {
  
      ngx_http_cleanup_pt             *cleanup;
  
@@ -140,7 +140,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_upstream_round_robin.c
 +++ nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
-@@ -273,6 +273,8 @@ ngx_http_upstream_init_round_robin_peer(
+@@ -282,6 +282,8 @@ ngx_http_upstream_init_round_robin_peer(
          }
  
          r->upstream->peer.data = rrp;
@@ -149,7 +149,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
      }
  
      rrp->peers = us->peer.data;
-@@ -326,6 +328,8 @@ ngx_http_upstream_create_round_robin_pee
+@@ -335,6 +337,8 @@ ngx_http_upstream_create_round_robin_pee
          }
  
          r->upstream->peer.data = rrp;
@@ -158,7 +158,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
      }
  
      peers = ngx_pcalloc(r->pool, sizeof(ngx_http_upstream_rr_peers_t)
-@@ -430,6 +434,17 @@ ngx_http_upstream_get_round_robin_peer(n
+@@ -437,6 +441,17 @@ ngx_http_upstream_get_round_robin_peer(n
  
      now = ngx_time();
  
@@ -176,7 +176,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_upstream_round_robin.c
      /* ngx_lock_mutex(rrp->peers->mutex); */
  
      if (rrp->peers->last_cached) {
-@@ -619,6 +634,8 @@ failed:
+@@ -626,6 +641,8 @@ failed:
          rrp->peers = peers->next;
          pc->tries = rrp->peers->number;
  

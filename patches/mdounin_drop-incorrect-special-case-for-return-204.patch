@@ -2,7 +2,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_core_module.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_core_module.c
 +++ nginx-catap/nginx/src/http/ngx_http_core_module.c
-@@ -1828,11 +1828,6 @@ ngx_http_send_response(ngx_http_request_
+@@ -1844,11 +1844,6 @@ ngx_http_send_response(ngx_http_request_
  
      r->headers_out.status = status;
  

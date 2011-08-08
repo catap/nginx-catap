@@ -18,7 +18,7 @@ Index: nginx-catap/nginx/src/http/ngx_http_request.c
 ===================================================================
 --- nginx-catap.orig/nginx/src/http/ngx_http_request.c
 +++ nginx-catap/nginx/src/http/ngx_http_request.c
-@@ -2267,17 +2267,17 @@ ngx_http_writer(ngx_http_request_t *r)
+@@ -2270,17 +2270,17 @@ ngx_http_writer(ngx_http_request_t *r)
              return;
          }
  
