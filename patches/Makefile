@@ -7,3 +7,8 @@ unapply:
 	@(cat `cat series | grep -v '^#' | tac`) | patch -u -p1 -E -f -R -d ../
 	@rm -f apply
 	@touch unapply
+
+flat:	apply
+	@touch flat
+	@touch apply
+	@touch unapply
