@@ -1,0 +1,16 @@
+For fetch all 3rd party modules and original nginx code use follow commands:
+
+    git submodule init
+    git submodule update
+
+For apply all patches to source use follow command:
+
+    make apply
+
+For unapply patches to source use follow command:
+
+    make unapply
+
+For make a flat (can't re aplly or unapply patches) use command:
+
+    make-tarbal.sh
