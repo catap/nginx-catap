@@ -259,7 +259,7 @@ Index: nginx-catap/nginx/src/core/ngx_status.c
 +
 +    ngx_atomic_fetch_add(window, n);
 +
-+    if (window - conf->window > counter->windows) {
++    if (window - conf->window >= counter->windows) {
 +        *(window - conf->window) = 0;
 +    } else {
 +        *(window + conf->window) = 0;
